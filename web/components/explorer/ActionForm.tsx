@@ -142,13 +142,15 @@ export function ActionForm({ spec, initial = {}, fixed = [], compact = false }: 
         } else values[p.key] = v;
       }
       let from = 0;
+      // An action that is what its memo says (an X link's record) writes its own memo.
+      const memo = spec.memo ? spec.memo(values, { height: 0, account: wallet.account }) : String(raw.memo ?? "").trim();
       // Built unsigned: it's signed on "Sign & send", right after a fresh passkey check.
       const tx = await previewer(wallet).build(
         (height) => {
           from = height;
           return spec.build(values, { height, account: wallet.account });
         },
-        String(raw.memo ?? "").trim(),
+        memo,
         { resolutions },
       );
       const { pf, blockMs } = await checkTx(tx, wallet.keyId, spec.id);
@@ -281,6 +283,14 @@ export function ActionForm({ spec, initial = {}, fixed = [], compact = false }: 
             ))}
             <dt>Signs</dt>
             <dd data-testid="signs">{preview.does}</dd>
+            {preview.tx.memo && (
+              <>
+                <dt>Memo</dt>
+                <dd data-testid="memo">
+                  <span className="mono break">{preview.tx.memo}</span> <span className="dim small">(public)</span>
+                </dd>
+              </>
+            )}
             {expiresAt != null && (
               <>
                 <dt>Expires</dt>

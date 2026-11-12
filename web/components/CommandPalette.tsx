@@ -135,6 +135,7 @@ export function CommandPalette() {
             { id: "send", group: "Wallet", label: `Send ${chainUnit()}`, href: "/send" },
             { id: "recv", group: "Wallet", label: "Receive", href: "/receive" },
             { id: "dev", group: "Wallet", label: "Devices & agents", href: "/devices" },
+            { id: "x", group: "Wallet", label: "Link your X account", href: to.x() },
           ]
         : []),
       ...(myPage
