@@ -22,6 +22,9 @@
 #                                   Set it once the chain has more than this one: after a restart
 #                                   the node asks them where the network stands before it signs,
 #                                   and with no one to ask a two-validator chain stays stopped
+#   PULSE_EXCLUDE                   accounts the pulse (/api/status `pulse`, the explorer's "boos
+#                                   active this week") doesn't count as people: addresses or .boo
+#                                   names, space-separated (the demo's: trickortreat.boo guestbook.boo)
 #   VM_MEMORY                       default 512mb (plus 512 MB of swap)
 #   VOLUME_GB                       default 3 (a validator keeps about two days of blocks)
 #   HOSTED_DIR                      where the chain's genesis and key live on this machine
@@ -103,6 +106,7 @@ if [ ! -f "$HOSTED_DIR/key-on-volume" ]; then
 fi
 
 peer_http_env=${PEER_HTTP:+"  PEER_HTTP = \"$PEER_HTTP\""}
+pulse_exclude_env=${PULSE_EXCLUDE:+"  PULSE_EXCLUDE = \"$PULSE_EXCLUDE\""}
 cat > "$work/fly.toml" <<TOML
 app = "$APP"
 primary_region = "$REGION"
@@ -118,6 +122,7 @@ swap_size_mb = 512
   CLIENT_IP_HEADER = "fly-client-ip"
   BLOCKULA_LOG = "warn,blockula=info"
 $peer_http_env
+$pulse_exclude_env
 [mounts]
   source = "data"
   destination = "/data"

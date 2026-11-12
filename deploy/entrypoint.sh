@@ -21,7 +21,9 @@
 # everything), ARCHIVE=1 (`--archive --full`: every block, replayed from genesis, never a node
 # fast-synced from a snapshot, which holds history only from there), CHECKPOINT
 # (HEIGHT:HASH:SET_HASH for an empty rpc home), HTTP_PORT (the HTTP port: the rpc's 7171 and a
-# validator's 7070 by default).
+# validator's 7070 by default), PULSE_EXCLUDE (`--pulse-exclude`: addresses or .boo names, comma-
+# or space-separated, the pulse doesn't count as people, e.g. the playground's house bots; needs a
+# release that has the flag).
 #
 # Joining after the weak-subjectivity period (relaunch problem 1): a full node with an empty home
 # refuses to sync from a root older than the period (OPERATIONS.md "Weak subjectivity"), and a
@@ -64,6 +66,7 @@ case "${ARCHIVE:-}" in
   *) echo "ARCHIVE must be 1 or 0, got $ARCHIVE" >&2; exit 1 ;;
 esac
 for url in ${PEER_HTTP:-}; do set -- "$@" --peer-http "$url"; done
+for bot in $(printf '%s' "${PULSE_EXCLUDE:-}" | tr ',' ' '); do set -- "$@" --pulse-exclude "$bot"; done
 
 if [ "$(id -u)" = 0 ]; then
   root=1

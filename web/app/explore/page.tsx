@@ -14,6 +14,12 @@ import type { AccountDetail, ChainStatus, HuntsView, MempoolView, ValidatorsDeta
 
 const WINDOW = 120;
 
+/** How long `blocks` blocks take, roughly: "2 days", "5 hours". */
+function heldFor(blocks: number, blockMs: number): string {
+  const hours = (blocks * blockMs) / 3_600_000;
+  return hours >= 48 ? plural(Math.round(hours / 24), "day") : hours >= 1.5 ? plural(Math.round(hours), "hour") : plural(Math.max(1, Math.round(hours * 60)), "minute");
+}
+
 export default function ExplorePage() {
   const now = useNow(1000);
   const me = useMe();
@@ -39,6 +45,10 @@ export default function ExplorePage() {
   const unhealthyBecause = String(healthErr?.body?.reason ?? health.data?.reason ?? healthErr?.message ?? "unknown");
   const head = blocks[blocks.length - 1];
   const blockMs = s?.block_time_ms ?? 1000;
+  // Accounts active this week, as people (not validators, programs, system accounts or bots). A
+  // pruning node holds less than a week: then it's over the days it holds.
+  const week = s?.pulse?.windows?.find((w) => w.window === "7d");
+  const pulse = s && week && Number.isFinite(week.active) ? { active: week.active, when: week.complete ? "this week" : `in the last ${heldFor(Math.max(1, s.height - week.from + 1), blockMs)}` } : null;
 
   // Your transactions light up their blocks in the pulse (read from the chain, so it works locked too).
   const mineAcct = useNode<AccountDetail>(me ? `/account/${me.address}` : null, { every: 5000 });
@@ -110,6 +120,7 @@ export default function ExplorePage() {
           <span className={`m0 ${healthy ? "ok" : healthy === false ? "error" : "dim"}`}>
             ● {healthy ? "The network is healthy" : healthy === false ? `Unhealthy: ${unhealthyBecause}` : "Checking health…"}
           </span>
+          {pulse && <span data-testid="pulse-active" title={`Accounts with a transaction ${pulse.when}, not counting validators, programs, system accounts or house bots`}>{plural(pulse.active, "boo")} active {pulse.when}</span>}
           {validators.data?.blocks_until_next_epoch != null && <span>{plural(validators.data.blocks_until_next_epoch, "block")} until epoch {validators.data.epoch + 1}</span>}
         </div>
       </section>

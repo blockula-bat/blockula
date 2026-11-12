@@ -356,6 +356,8 @@ test.describe("every explorer page", () => {
   test("people: accounts by name, richest, newest active and alphabetical, with the newest names", async ({ page }) => {
     // The Pulse's accounts figure opens the directory.
     await visit(page, "/explore", (p) => p.getByRole("heading", { name: "blockula-testnet, live" }), errors);
+    // The pulse: people active this week, not validators or the house bots.
+    await expect(page.getByTestId("pulse-active")).toHaveText("5 boos active this week");
     await page.getByTestId("pulse-people").click();
     await expect(page).toHaveURL(/\/boos\/?$/);
     await visit(page, "/boos", (p) => p.getByRole("heading", { name: "Boos", exact: true }), errors);

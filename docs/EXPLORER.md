@@ -66,7 +66,7 @@ Borrowed from the explorers worth borrowing from, without copying any of them:
 
 | Route | What |
 |---|---|
-| `/explore` | The pulse: live block ribbon, cadence, proposer share, chain figures, latest transactions, mempool |
+| `/explore` | The pulse: live block ribbon, cadence, proposer share, chain figures (with the boos active this week: `/api/status`' `pulse`), latest transactions, mempool |
 | `/boos` | Boos: everyone on the chain by `.boo` name (`/api/accounts`, `/api/names`): richest, newest active or alphabetical, a search box, the newest names, and Send on each row |
 | `/block/{height}` | A block in context: neighbors on a ribbon, proposer, hashes, certificate, transactions |
 | `/tx/{id}` | The receipt: summary, lifecycle trace, balance changes, signer key, details, raw |

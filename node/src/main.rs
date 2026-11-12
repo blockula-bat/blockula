@@ -28,6 +28,7 @@ mod poc;
 mod program_cli;
 mod programs;
 mod protection;
+mod pulse;
 mod release_cli;
 mod replay;
 mod setup_cli;
@@ -138,6 +139,11 @@ struct Net {
     /// Applies at that height only; remove it once the network runs again
     #[arg(long)]
     network_halted_at: Option<u64>,
+    /// An account the pulse (`/api/status`' `pulse`, `/metrics`' blockula_accounts_active) doesn't
+    /// count as people: an address or a .boo name (its owner at the time), e.g. a house bot. Repeat
+    /// it or separate them with commas. Validators, programs and system accounts are never counted
+    #[arg(long = "pulse-exclude", value_name = "ADDRESS|NAME", value_delimiter = ',', value_parser = pulse::parse_exclude)]
+    pulse_exclude: Vec<String>,
 }
 
 #[derive(Subcommand)]
@@ -393,7 +399,7 @@ fn net_opts(net: Net, http_port: Option<u16>, p2p_preset: Option<String>, epheme
         header: net.client_ip_header.map(|h| h.to_lowercase()),
         hops: net.client_ip_hops as usize,
     };
-    let http = node::HttpOpts { read_rps: net.read_rps, read_burst: net.read_burst, timeout: std::time::Duration::from_secs(net.http_timeout_secs.max(1)), program_views: net.program_views, view_max_fuel: net.view_max_fuel };
+    let http = node::HttpOpts { read_rps: net.read_rps, read_burst: net.read_burst, timeout: std::time::Duration::from_secs(net.http_timeout_secs.max(1)), program_views: net.program_views, view_max_fuel: net.view_max_fuel, pulse_exclude: net.pulse_exclude };
     let pruning = match (net.archive, net.prune_blocks) {
         (true, _) => node::Pruning::Archive,
         (_, Some(n)) => node::Pruning::Keep(n),
@@ -700,6 +706,22 @@ mod cli_tests {
         for bad in ["0", "20000001", "-1", "lots"] {
             assert!(parse(&["run", "--home", "h", "--view-max-fuel", bad]).is_err(), "--view-max-fuel {bad}");
         }
+    }
+
+    /// `--pulse-exclude`: repeatable or comma-separated, addresses or names (stored with .boo), and
+    /// nothing else; empty by default.
+    #[test]
+    fn the_pulse_exclude_flag_parses() {
+        use clap::Parser;
+        let parse = |args: &[&str]| super::Cli::try_parse_from(["blockula"].iter().chain(args));
+        let bots = |args: &[&str]| match parse(args).unwrap().cmd {
+            super::Cmd::Run { net, port, p2p_preset, .. } => super::net_opts(net, port, p2p_preset, false).http.pulse_exclude,
+            _ => unreachable!(),
+        };
+        assert!(bots(&["run", "--home", "h"]).is_empty());
+        let a = crate::crypto::Keys::from_seed([5; 32]).address();
+        assert_eq!(bots(&["run", "--home", "h", "--pulse-exclude", "trickortreat.boo,guestbook", "--pulse-exclude", &a]), ["trickortreat.boo".to_string(), "guestbook.boo".into(), a]);
+        assert!(parse(&["run", "--home", "h", "--pulse-exclude", "not a name"]).is_err());
     }
 
     /// D10: the tagline makes no "never dies" claim.

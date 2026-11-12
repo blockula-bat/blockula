@@ -57,6 +57,7 @@ Operations:
 - `/api/health` returns 503 when the head is stale or the node is syncing.
 - `/metrics` serves Prometheus metrics.
 - `/api/status` shows the version, git sha and genesis hash.
+- The pulse, one number for whether a chain is used: `/api/status`' `pulse` and `/metrics`' `blockula_accounts_active{window="7d"}` (and `"1d"`) count the accounts whose newest finalized tx (sent, or naming them) is in the window, not counting validators, programs or system accounts. `--pulse-exclude <address|name>` (repeatable, or comma-separated) leaves out accounts you know are bots, such as a playground's house bots; a name means its owner at the time. A window is in blocks at the chain's block time, and counts only the history this node holds: a pruning validator (two days by default) reports the week as `complete: false` (`blockula_accounts_active_complete 0`), so count it on a full node or give the validator `--prune-blocks` of at least a week. Not counted on a chain of more than 20,000 accounts.
 - Every node, full nodes included, serves `/api/sync`, so validators' HTTP needn't be public.
 - `--peer-http <url>` (repeatable) replaces the genesis list of HTTP peers used for sync and forwarding.
 - `join --genesis-hash <hex>` pins the chain. `summon` prints the hash.
