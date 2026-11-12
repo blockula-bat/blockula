@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { CONTRIBUTE_PROMPT, VALIDATOR_PROMPT, demoNode, isPrivateHost, nodeAddress, validatorPrompt, walletOf } from "./site.ts";
+import { CONTRIBUTE_PROMPT, VALIDATOR_PROMPT, X_ACCOUNT, X_URL, demoNode, isPrivateHost, nodeAddress, validatorPrompt, walletOf } from "./site.ts";
 
 test("https anywhere, plain http only on this machine or a private network (mcp/src/network.ts's rule)", () => {
   for (const [input, url] of [
@@ -68,4 +68,15 @@ test("the validator setup prompt is BECOME-A-VALIDATOR.md's, with a chain's node
   assert.match(filled, /Node: {10}https:\/\/demo\.blockula\.app\n/);
   assert.match(filled, new RegExp(`Genesis hash:  ${"ab".repeat(32)}\\n`));
   assert.match(filled, /Path: {10}<A /);
+});
+
+test("the official X account is @BlockulaChain, and the docs that name it link the same profile", () => {
+  assert.equal(X_ACCOUNT, "BlockulaChain");
+  assert.equal(X_URL, "https://x.com/BlockulaChain");
+  for (const file of ["README.md", "SUPPORT.md", "llms.txt"]) {
+    const text = readFileSync(new URL(`../../${file}`, import.meta.url), "utf8");
+    assert.ok(text.includes(`[@${X_ACCOUNT}`) && text.includes(`(${X_URL})`), `${file} links @${X_ACCOUNT}`);
+    // No other x.com or twitter.com profile is passed off as the project's.
+    for (const m of text.matchAll(/https:\/\/(?:x|twitter)\.com\/([A-Za-z0-9_]+)/g)) assert.equal(m[1], X_ACCOUNT, `${file}: ${m[0]}`);
+  }
 });

@@ -75,6 +75,7 @@ test("a first visit to / shows this chain and the get-started path", async ({ pa
   // Use cases, and what the page never says.
   await expect(page.locator(".landing-use")).toHaveCount(6);
   await expect(main).toContainText("isn't externally audited");
+  await expect(main.getByTestId("x-account")).toHaveAttribute("href", "https://x.com/BlockulaChain");
   await expect(main).not.toContainText(/mainnet|\bcontracts?\b|token sale/i);
 
   await page.getByRole("link", { name: "Make a wallet" }).click();
