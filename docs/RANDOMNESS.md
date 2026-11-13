@@ -223,13 +223,17 @@ change from release to release, so such a chain is for testing and may need recr
 Then, as for any program ([BUILD-ON-IT.md](BUILD-ON-IT.md)):
 
 ```bash
-blockula program upload node/vm/tests/programs/dice.wasm --interface node/vm/tests/programs/dice.iface.json
-blockula program create <wasm_hash> <interface_hash> --init init --input 01000000   # min_reveals = 1
-blockula program call <address> fund --value 100
-blockula program call <address> roll --input 03 --value 1 --storage-limit 1         # pick 3
+blockula program upload node/vm/tests/programs/dice.wasm --interface node/vm/tests/programs/dice.iface.json --yes
+blockula program create <wasm_hash> <interface_hash> --init init --input 01000000 --storage-limit 1 --yes   # min_reveals = 1
+blockula program call <address> fund --value 60 --yes
+blockula program call <address> roll --input 03 --value 1 --storage-limit 1 --yes   # pick 3
 # two epochs later
 blockula program call <address> settle --input 0000000000000000                     # roll 0
 ```
+
+`scripts/randomness-e2e.sh` does all of this on four validators it summons into a temporary
+directory: a normal roll, a roll whose epoch one validator can't reveal for, and a roll left past
+its deadline.
 
 A one-validator dev chain has one reveal per epoch from epoch 3 on, so `min_reveals` of 1 is the
 most that settles there.
@@ -243,6 +247,7 @@ most that settles there.
 | `blake3_v1`, `epoch_v1`: results, bounds, fuel | `node/vm/tests/randomness.rs` |
 | `dice` and `abi::random` | `node/vm/tests/randomness.rs` (in memory), `node/src/programs/exec/tests/randomness.rs` (one validator) |
 | Four validators: a normal settle, a withheld reveal (jailed, three reveals), no reveals (refund), expiry (refund), the same blocks, roots and receipts on every node | `node/src/sim/programs.rs`, `the_dice_settles_identically_on_four_validators` |
+| Four real nodes on local ports, driven with `blockula program`: a settle on 4 reveals, a settle on 3 with the withholder jailed, an expiry refund | `scripts/randomness-e2e.sh` (about 8 minutes; not in CI) |
 | v1 history replays unchanged | `node/testdata/replay` ([REPLAY.md](REPLAY.md)) |
 | Fuzzing | `node/vm/fuzz` deploys `dice` and takes the height and the reveal count from its input |
 
