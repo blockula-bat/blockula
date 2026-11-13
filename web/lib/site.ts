@@ -63,6 +63,9 @@ export function nodeAddress(input: string): NodeAddress {
 /** The wallet a node serves (node/src/wallet.rs): what "Open" takes a visitor to. */
 export const walletOf = (node: string) => `${node.replace(/\/+$/, "")}/wallet/`;
 
+/** The wallet page for linking an X account (`app/x`), on a node that serves the wallet. */
+export const xWalletOf = (node: string) => `${walletOf(node)}x/`;
+
 /**
  * NEXT_PUBLIC_DEMO_NODE as the site uses it: the node's base URL, or undefined when it's unset.
  * The build fails on one that isn't a node address (next.config.ts), so a typo can't ship.
