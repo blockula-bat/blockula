@@ -106,7 +106,7 @@
 //! | `hit`, `stand` | game 8 | the hand's player | moves | `hit` / `stand`: game 8 ‖ player 32 ‖ deadline 8 (‖ how 1 for `stand`: 0 the player, 1 idle) |
 //! | `relay_hit`, `relay_stand` | game 8 ‖ post id 8 | the player's relayer, on a table hand | the same | the move's, `relayed` |
 //! | `relay_withdraw` | player 32 ‖ post id 8 | the player's relayer | pays the player's whole table balance to the player | `withdraw`, `relayed` |
-//! | `reveal` | game 8 ‖ n 4 ‖ n × 32 | anyone who knows the links | deals the next `n` cards; returns phase 1 ‖ outcome 1 | `cards`, `settled` |
+//! | `reveal` | game 8 ‖ n 4 ‖ n × 32 | anyone who knows the links | deals the next cards: the links in order, passing over any the hand already holds (a call someone got ahead of still deals the rest; one with nothing new changes nothing); returns phase 1 ‖ outcome 1 | `cards` (its `n` counts the links this call revealed), `settled` |
 //! | `timeout` | game 8 | anyone, past the deadline | stands an idle player, pays the player when the dealer missed a reveal, or ends a hand whose seed never came (the stake is the house's); returns phase 1 ‖ outcome 1 | `stand` or `settled` |
 //! | `game` (view) | game 8 | | the hand's record ‖ player's total 1 ‖ dealer's total 1 | |
 //! | `player` (view) | account 32 | | the player's record (zeros if none) ‖ the height 8 | |
@@ -1056,6 +1056,21 @@ fn settle(id: u64, g: &[u8; GAME], hand: &Hand, outcome: Outcome) {
     emit(b"settled", &ev);
 }
 
+/// Whether `link` is one the hand already revealed: the last one, or one before it (never the
+/// commitment). The record keeps only the last link, and each earlier one is its hash.
+fn revealed(link: &[u8; 32], g: &[u8], dealt: u8) -> bool {
+    let mut at: [u8; 32] = addr_at(g, G_LINK);
+    for back in 0..dealt {
+        if at == *link {
+            return true;
+        }
+        if back + 1 < dealt {
+            at = prev_link(&at);
+        }
+    }
+    false
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn bk_reveal() {
     nonpayable();
@@ -1065,26 +1080,33 @@ pub extern "C" fn bk_reveal() {
     let l = limits();
     let mut g = game_record(id);
     let mut hand = hand_of(&g);
-    if !hand.phase.dealers() {
-        abort(NOT_DEALERS_TURN, b"the dealer owes no card");
-    }
     let seed: [u8; 32] = addr_at(&g, G_SEED);
-    let n = links.len() / 32;
     let mut ev = [0u8; 42 + 33 * MAX_REVEAL + 11];
     set(&mut ev, 0, id);
     ev[8..40].copy_from_slice(&g[G_PLAYER..G_PLAYER + 32]);
     ev[40] = hand.dealt + 1;
-    ev[41] = n as u8;
     let mut settled = None;
-    for i in 0..n {
-        let link: [u8; 32] = addr_at(links, 32 * i);
-        // A link past the hand's last card: the hand is the player's to move, or over.
+    // Links this call revealed. One the hand already holds is passed over, so a call that
+    // someone got ahead of (with its first link, or all of them) still deals the rest.
+    let mut n = 0;
+    for at in 0..links.len() / 32 {
+        let link: [u8; 32] = addr_at(links, 32 * at);
+        let next = prev_link(&link) == g[G_LINK..G_LINK + 32];
+        if !next && revealed(&link, &g, hand.dealt) {
+            continue;
+        }
         if !hand.phase.dealers() {
+            if n == 0 {
+                abort(NOT_DEALERS_TURN, b"the dealer owes no card");
+            }
+            // A link past the hand's last card: the hand is the player's to move, or over.
             abort(TOO_MANY_LINKS, b"more links than the hand takes");
         }
-        if prev_link(&link) != g[G_LINK..G_LINK + 32] {
+        if !next {
             abort(BAD_LINK, b"not the chain's next link");
         }
+        let i = n;
+        n += 1;
         let j = hand.dealt + 1;
         if j as usize > CHAIN_LEN {
             abort(code::BAD_STORED, b"past the chain");
@@ -1097,6 +1119,12 @@ pub extern "C" fn bk_reveal() {
             settled = Some(outcome);
         }
     }
+    // Every link was one the hand already held: nothing changes, and no deadline moves.
+    if n == 0 {
+        ret(&[hand.phase as u8, 0]);
+        return;
+    }
+    ev[41] = n as u8;
     store_hand(&mut g, &hand);
     // The dealer's deadline runs from the bet, the hit or the stand, whatever it revealed since;
     // the player's turn starts its own.

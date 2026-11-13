@@ -806,10 +806,38 @@ fn reveals_are_the_chains_next_links_and_no_more() {
     let r = t.reveal(id, 1, 2);
     assert_eq!(r.returns[0], [Phase::Deal as u8, 0]);
     assert_eq!(u64_at(&t.game(id).unwrap(), 104), deadline, "a partial reveal doesn't extend the deadline");
-    assert_eq!(abort_code(&t.reveal(id, 1, 1)), Some(58), "a link already revealed");
-    // Anyone who knows the link may reveal it.
-    let r = t.tx("stranger", "reveal", reveal_input(id, &links[3..4]), 0);
+    // Links the hand already holds are passed over (BJ-08): a call with nothing new succeeds,
+    // deals nothing, emits nothing and moves no deadline.
+    let before = t.game(id).unwrap();
+    for held in [&links[1..2], &links[2..3], &links[1..3], &links[2..2 + 1]] {
+        let r = t.tx("dealer", "reveal", reveal_input(id, held), 0);
+        assert!(r.ok());
+        assert_eq!(r.returns[0], [Phase::Deal as u8, 0]);
+        assert!(r.events.is_empty(), "no event for a reveal with nothing new");
+        assert_eq!(t.game(id).unwrap(), before);
+    }
+    // The commitment is no link, and a held link doesn't excuse a wrong one after it.
+    assert_eq!(abort_code(&t.tx("dealer", "reveal", reveal_input(id, &[links[0]]), 0)), Some(58));
+    assert_eq!(abort_code(&t.tx("dealer", "reveal", reveal_input(id, &[links[1], links[4]]), 0)), Some(58));
+    assert_eq!(abort_code(&t.tx("dealer", "reveal", reveal_input(id, &[links[2], chain_of(1)[3]]), 0)), Some(58));
+    assert_eq!(t.game(id).unwrap(), before);
+    // Anyone who knows the link may reveal it. The dealer's whole deal, sent after someone got
+    // ahead of it with the first two links, deals the third: the `cards` event counts that one.
+    let r = t.tx("dealer", "reveal", reveal_input(id, &links[1..4]), 0);
     assert_eq!(r.returns[0], [Phase::Player as u8, 0]);
+    let ev = event(&r, "cards");
+    assert_eq!((ev[40], ev[41]), (3, 1), "the third card, one link");
+    assert_eq!(ev[42..74], links[3]);
+    assert_eq!(ev.len(), 42 + 33 + 11);
+    // On the player's turn a call with only held links changes nothing: the deadline stays.
+    let before = t.game(id).unwrap();
+    t.host.height += 3;
+    let r = t.tx("stranger", "reveal", reveal_input(id, &links[1..4]), 0);
+    assert!(r.ok() && r.events.is_empty());
+    assert_eq!(r.returns[0], [Phase::Player as u8, 0]);
+    assert_eq!(t.game(id).unwrap(), before, "a reveal with nothing new doesn't extend the player's deadline");
+    // Held links, then one the hand doesn't take yet: the dealer owes no card.
+    assert_eq!(abort_code(&t.tx("dealer", "reveal", reveal_input(id, &links[2..5]), 0)), Some(57));
     // On the player's turn the dealer owes nothing.
     assert_eq!(abort_code(&t.reveal(id, 4, 1)), Some(57));
     // A hit takes one card and no more.

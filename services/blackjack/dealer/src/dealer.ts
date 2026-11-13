@@ -17,7 +17,8 @@
  *   store and its backup before the commitment leaves this machine.
  *
  * So a restart needs nothing but the chain and the store. Every call is safe to repeat: the
- * program takes a link only as its chain's next (58), a batch only where the last one ended (61)
+ * program takes a link only as its chain's next (58; one the hand already holds is passed over, so
+ * a reveal someone got ahead of still deals the rest), a batch only where the last one ended (61)
  * and a timeout only past the deadline (60), and secrets are kept by game index, so a batch sent
  * again commits the same chains. A transaction whose fate isn't known is followed by its id
  * until it is final, failed, or can no longer run; only one the node has never heard of is

@@ -198,22 +198,34 @@ export class FakeTable implements TableReader, TxSender {
         const { head: id, items } = counted(c.input);
         const g = this.games.get(id);
         if (!g) throw 54;
-        if (!dealers(g.phase)) throw 57;
-        if (g.clientSeed === null) throw new Error("a hand the dealer owes a card has its seed");
         const hand = handOf(g);
         const first = g.dealt + 1;
         const cards: { link: string; card: number }[] = [];
         let link = g.link;
         let outcome: Outcome | null = null;
+        // As the program: a link the hand already holds (the last one revealed, or one before it;
+        // never the commitment) is passed over.
+        const held = (x: string): boolean => {
+          let at = link;
+          for (let back = 0; back < hand.dealt; back++) {
+            if (at === x) return true;
+            at = prevLink(at);
+          }
+          return false;
+        };
         for (const next of items) {
-          if (!dealers(hand.phase)) throw 59;
+          if (prevLink(next) !== link && held(next)) continue;
+          if (!dealers(hand.phase)) throw cards.length ? 59 : 57;
           if (prevLink(next) !== link) throw 58;
+          if (g.clientSeed === null) throw new Error("a hand the dealer owes a card has its seed");
           const cardNo = card(next, g.clientSeed, id, hand.dealt + 1);
           const step = hand.deal(cardNo);
           link = next;
           cards.push({ link: next, card: cardNo });
           if (step?.kind === "settled") outcome = step.outcome;
         }
+        // Nothing new: nothing changes, no event, no deadline moves.
+        if (!cards.length) return [];
         const deadline = hand.phase === Phase.Player ? BigInt(this.height) + this.limits_.idleBlocks : g.deadline;
         const now: Game = { ...g, link, deadline, phase: hand.phase, dealt: hand.dealt, playerCards: [...hand.player], dealerCards: [...hand.dealer], playerTotal: total(hand.player).total, dealerTotal: total(hand.dealer).total };
         const events: TableEvent[] = [{ name: "cards", game: id, player: g.player, first, cards, phase: hand.phase, playerTotal: now.playerTotal, dealerTotal: now.dealerTotal, deadline }];

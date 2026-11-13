@@ -336,13 +336,41 @@ try {
       r.table.call(call.reveal(id, [chain[1]]), "boo1stranger");
     };
     await r.step();
-    const refused = r.logs.find((l) => l.action === "reveal_refused")!;
-    assert.deepEqual([refused.abort, refused.moved, refused.level], [58, true, "info"]);
-    // The hand is at card 1 now: the next reveal carries the links owed from there.
-    const g = r.table.games.get(id)!;
-    assert.equal(g.dealt, 1);
-    await r.step();
-    assert.equal(sent(r, "reveal").at(-1)!.call.input, call.reveal(id, owedLinks(g, chain)).input);
+    // The program passes over the link the hand already holds and deals the rest (BJ-08): the
+    // dealer's transaction isn't refused, and the deal is done in that one call.
+    assert.equal(raced, true);
+    assert.equal(r.logs.find((l) => l.action === "reveal_refused"), undefined);
+    const dealt = r.logs.filter((l) => l.action === "reveal").at(-1)!;
+    assert.equal((dealt.cards as number[]).length, 2, "the two cards left of the deal");
+    const g = r.table.games.get(id);
+    if (g) assert.deepEqual([g.dealt, g.phase], [3, Phase.Player]);
+    assert.equal(sent(r, "reveal").length, 1);
+
+    // Someone reveals every link the dealer was about to: its call changes nothing and isn't an
+    // error, and the next read finds the hand moved on.
+    const ra = rig();
+    await ra.step();
+    const all = ra.table.bet("boo1alice", seed());
+    const ca = chainFromTop(ra.store.top(all)!);
+    let copied = false;
+    ra.table.beforeApply = (c) => {
+      if (c.method !== "reveal" || copied) return;
+      copied = true;
+      ra.table.call(c, "boo1stranger");
+    };
+    await ra.step();
+    assert.equal(copied, true);
+    assert.equal(ra.logs.find((l) => l.action === "reveal_refused"), undefined);
+    assert.equal(ra.logs.filter((l) => l.action === "reveal").at(-1)!.cards, undefined, "nothing dealt by the dealer's own call");
+    const ga = ra.table.games.get(all);
+    if (ga) assert.equal(ga.link, ca[3]);
+    // A link that is neither held nor next is still refused, as it was.
+    const rb = rig();
+    await rb.step();
+    const other = rb.table.bet("boo1alice", seed());
+    const cb = chainFromTop(rb.store.top(other)!);
+    assert.throws(() => rb.table.call(call.reveal(other, [cb[2]]), "boo1stranger"));
+    assert.throws(() => rb.table.call(call.reveal(other, [cb[0]]), "boo1stranger"));
 
     // A reveal that keeps being refused with the table unchanged (a broken node, say) backs off
     // instead of being sent every tick.
@@ -375,7 +403,7 @@ try {
     const tries = sent(r3, "reveal").length;
     for (let i = 0; i < 5; i++) await r3.step();
     assert.equal(sent(r3, "reveal").length, tries, "a settled hand is left alone");
-    console.log("✓ a reveal the table had moved past (58, 54) isn't retried as it was; a failing one backs off");
+    console.log("✓ a reveal someone got ahead of deals the rest (links already held are passed over); one for a settled hand (54) isn't retried; a failing one backs off");
   }
 
   // ---- an unconfirmed reveal is followed by id; the hand still finishes
