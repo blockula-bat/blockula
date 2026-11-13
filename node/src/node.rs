@@ -118,8 +118,8 @@ impl Pruning {
     }
 }
 
-/// HTTP limits: per-client reads (token bucket) and the request timeout, and how program views are
-/// served.
+/// HTTP limits: per-client reads (token bucket) and the request timeout, how program views are
+/// served, and which accounts the pulse leaves out.
 #[derive(Clone, Debug)]
 pub struct HttpOpts {
     pub read_rps: u32,
@@ -130,17 +130,19 @@ pub struct HttpOpts {
     pub program_views: bool,
     /// `--view-max-fuel`: the most fuel one view may use (`None`: `program_max_tx_fuel`, which bounds it anyway).
     pub view_max_fuel: Option<u64>,
+    /// `--pulse-exclude`: accounts (addresses or names) the pulse doesn't count (pulse.rs).
+    pub pulse_exclude: Vec<String>,
 }
 
 impl Default for HttpOpts {
     fn default() -> Self {
-        Self { read_rps: api::READ_RPS, read_burst: api::READ_BURST, timeout: api::HTTP_TIMEOUT, program_views: false, view_max_fuel: None }
+        Self { read_rps: api::READ_RPS, read_burst: api::READ_BURST, timeout: api::HTTP_TIMEOUT, program_views: false, view_max_fuel: None, pulse_exclude: vec![] }
     }
 }
 
 /// The HTTP API for `chain`, with this node's limits and trust.
 fn http_node(chain: Shared, marshal: Option<consensus::MarshalMailbox>, peers: Vec<String>, net: &NetOpts, trust: &Trust) -> Node {
-    let mut node = Node::new(chain, marshal, peers, net.client_ip.clone()).with_read_limits(net.http.read_rps, net.http.read_burst).with_program_views(net.http.program_views, net.http.view_max_fuel);
+    let mut node = Node::new(chain, marshal, peers, net.client_ip.clone()).with_read_limits(net.http.read_rps, net.http.read_burst).with_program_views(net.http.program_views, net.http.view_max_fuel).with_pulse_exclude(net.http.pulse_exclude.clone());
     node.timeout = net.http.timeout;
     node.checkpoint_height = trust.newest();
     node
