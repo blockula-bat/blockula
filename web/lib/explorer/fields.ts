@@ -2,7 +2,7 @@
  * An action form's fields as typed, checked before anything is built: the same rules the chain
  * applies, in words. Pure (the SDK's address check only), so `node --test` runs it directly.
  */
-import { KNOWN_PREFIXES, addressPrefix, parseFang } from "@blockula/sdk";
+import { KNOWN_PREFIXES, addressPrefix, parseFang, xHandle, xPostRef } from "@blockula/sdk";
 import type { Param } from "./programs.ts";
 
 const utf8 = (s: string) => new TextEncoder().encode(s).length;
@@ -25,6 +25,17 @@ export function checkAccount(raw: string, prefix: string): string | null {
     return valid === prefix ? null : `That's an address on another network (${valid}1…). Addresses here start with ${prefix}1.`;
   }
   return NAME.test(v) ? null : `A .boo name or a ${prefix}1… address.`;
+}
+
+/** The SDK's own words for why a value isn't one, as a sentence; null when it is. */
+function said(read: () => unknown): string | null {
+  try {
+    read();
+    return null;
+  } catch (e) {
+    const m = e instanceof Error ? e.message : String(e);
+    return `${m[0].toUpperCase()}${m.slice(1)}.`;
+  }
 }
 
 /** What's wrong with one field as typed, or null. */
@@ -57,6 +68,10 @@ export function checkField(p: Pick<Param, "type" | "optional" | "max">, raw: str
       return /^[0-9a-f]{64}$/.test(v.toLowerCase()) ? null : "64 characters of 0–9 and a–f.";
     case "text":
       return p.max && utf8(v) > p.max ? `At most ${p.max} bytes.` : null;
+    case "x_handle":
+      return said(() => xHandle(v));
+    case "x_post":
+      return said(() => xPostRef(v));
   }
   return null;
 }

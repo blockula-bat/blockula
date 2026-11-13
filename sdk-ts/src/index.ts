@@ -6,6 +6,7 @@ import { DEFAULT_TIP_CAP_MULTIPLE, KEY_POP_CONTEXT, PUBLIC_KEY_LEN, SIGNATURE_LE
 import { NAMESPACES, checkProofResponse, decodeAccount, decodeName, decodeProgram, type ProofResponse, type ProvenRecord } from "./proof.js";
 import { ANY_PROGRAM_VERSION, MAX_PROGRAM_BINDINGS, MAX_PROGRAM_CALLS, MAX_PROGRAM_CODE_BYTES, MAX_PROGRAM_INTERFACE_BYTES, ProgramAnswerError, ProgramsOffError, defaultFuelLimit, depositWithMargin, plainText, positiveFuel, programAddressArg, programBytesArg, programHashArg, programInputArg, programMethodArg, checkCode, checkFuel, checkInterface, checkParams, checkProgram, checkProgramsStatus, checkReceipt, checkView, outcomeWords, priceFuel, programCost, programRecordDeposit, programUploadDeposit, reserveFuel, uploadFuel, type FuelReservation, type ProgramCodeInfo, type ProgramCost, type ProgramFuel, type ProgramInfo, type ProgramInterfaceInfo, type ProgramParams, type ProgramReceipt, type ProgramViewResult } from "./programs.js";
 import { describeKind, reviewAction } from "./describe.js";
+import { xHandle, xIntentUrl, xLinkCode, xLinkFrom, xLinkMemo, xPostRef, xProofPost, xRecordIn, sameXHandle, X_UNLINK_MEMO, type XLink } from "./xlink.js";
 import { NETWORKS, TESTNET_RETIRED, isNetworkName, type NetworkClock, type NetworkName, type NetworkPreset } from "./networks.js";
 
 export * from "./tx.js";
@@ -16,6 +17,7 @@ export * from "./describe.js";
 export * from "./networks.js";
 export * from "./payments.js";
 export * from "./programs.js";
+export * from "./xlink.js";
 
 export const DEFAULT_RPC = "http://localhost:7070";
 /** Address prefixes: `boo` on mainnet (and dev chains), `tboo` on public testnets. */
@@ -998,6 +1000,49 @@ export class Wallet {
 
   async unlinkGithub(handle: string) {
     return this.submitQueued({ type: "unlink_github", handle }, "", {}, []);
+  }
+
+  /**
+   * Step 1 of linking an X account (docs/X-LINKING.md): the code `@handle` must post for this
+   * wallet's account on this chain, the text to post, and X's "write a post" link with it filled
+   * in. Signs nothing. Then post it from `@handle` and pass the post's link to `linkX`.
+   */
+  async xProof(handle: string): Promise<{ handle: string; code: string; text: string; intent_url: string }> {
+    const h = xHandle(handle);
+    const status = await this.client.status();
+    const code = xLinkCode({ chainId: String(status.chain_id), genesisHash: String(status.genesis_hash) }, this.account, h);
+    const names = arr((await this.client.account(this.account).catch(() => null))?.names);
+    const text = xProofPost(code, typeof names[0] === "string" ? names[0] : undefined);
+    return { handle: h, code, text, intent_url: xIntentUrl(text) };
+  }
+
+  /**
+   * Step 2: record that `@handle` is this account's X account, pointing at the proof post (its
+   * link or id). The record is a transfer of 0 from the account to itself with the memo
+   * `x-link:v1:<handle>:<post id>`: no protocol change, and its signature binds the handle to
+   * the account, the chain and a nonce. It replaces any earlier link. Needs an owner key (a
+   * session key's record is ignored by every reader, so none is sent). The post isn't fetched
+   * here: `verifyXLink(await client.xLink(account))` checks it, before or after.
+   */
+  async linkX(handle: string, post: string, opts: TxOptions & { wait?: boolean } = {}) {
+    const h = xHandle(handle);
+    const ref = xPostRef(post);
+    if (ref.handle && !sameXHandle(ref.handle, h)) throw new Error(`that post's link is under @${ref.handle}, not @${h}: the proof must be posted by @${h}. Nothing was signed`);
+    await this.ownerKeyNeeded("link an X account");
+    return this.submitQueued({ type: "transfer", to: this.account, amount: "0" }, xLinkMemo(h, ref.id), opts, []);
+  }
+
+  /** Take this account's X link away: a transfer of 0 to itself with the memo `x-unlink:v1`. Needs an owner key. */
+  async unlinkX(opts: TxOptions & { wait?: boolean } = {}) {
+    await this.ownerKeyNeeded("unlink an X account");
+    return this.submitQueued({ type: "transfer", to: this.account, amount: "0" }, X_UNLINK_MEMO, opts, []);
+  }
+
+  /** Refuses, before anything is signed, when this key isn't an owner key of the account it acts for. */
+  private async ownerKeyNeeded(what: string) {
+    const keys = arr((await this.client.account(this.account))?.keys);
+    const mine = keys.find((k) => k?.key_id === this.keyId);
+    if (mine?.role?.type !== "owner") throw new Error(`only an owner key can ${what}: ${mine ? "this is a session key, which signs payments only" : "this key isn't on the account"}. Nothing was signed`);
   }
 
   /** Put a bounty on a GitHub issue. `expiresInBlocks` from now (max ~1 year). */
@@ -2607,6 +2652,38 @@ export class Client {
     const a = await this.account(account);
     const s = await this.status().catch(() => null);
     return { txs: arr(a?.recent_txs), next: null, history_from: num(s?.history_from), paged: false };
+  }
+  /**
+   * The X account an account linked (docs/X-LINKING.md), or `null`: its newest link or unlink
+   * record, read from its history a page at a time, newest first (at most `maxPages` pages of
+   * 100; default 20). A record is a transfer the account sent itself, signed by one of its owner
+   * keys now, with an `x-link:v1:…` or `x-unlink:v1` memo (`xRecordOf`).
+   *
+   * What comes back is the account's **claim** and where its proof is: `verifyXLink(link)`
+   * fetches the post and checks it. It's read from this node's history, which nothing proves: a
+   * node can leave a record out (show an old link, or none), though it can't make one up, since
+   * `verifyXLink` needs `@handle`'s own post for this very account. A pruning node only knows
+   * records since its `history_from`: ask a node that keeps everything.
+   */
+  async xLink(account: string, opts: { maxPages?: number } = {}): Promise<XLink | null> {
+    const a = await this.account(account);
+    const address = a?.account?.address;
+    if (typeof address !== "string") throw new Error(`the node didn't say which account ${account} is`);
+    const owners = arr(a?.keys).filter((k) => k?.role?.type === "owner" && typeof k?.key_id === "string").map((k) => k.key_id as string);
+    if (!owners.length) return null;
+    let before: string | undefined;
+    for (let page = 0; page < (opts.maxPages ?? 20); page++) {
+      const h = await this.history(address, { before, limit: 100 });
+      const rec = xRecordIn(h.txs, address, owners);
+      if (rec) {
+        if (rec.type === "unlink") return null;
+        const status = await this.status();
+        return xLinkFrom(rec, address, { chainId: String(status.chain_id), genesisHash: String(status.genesis_hash) });
+      }
+      if (!h.next) break;
+      before = h.next;
+    }
+    return null;
   }
   block(heightOrHash: number | string) { return this.call(`/block/${heightOrHash}`); }
   tx(id: string) { return this.call(`/tx/${id}`); }

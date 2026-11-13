@@ -5,6 +5,11 @@
  * (`<node>/wallet/`, node/src/wallet.rs). No imports, so lib/site.test.mjs runs it under plain Node.
  */
 
+/** The project's one official X account, without the `@`. Nothing else on X speaks for Blockula. */
+export const X_ACCOUNT = "BlockulaChain";
+/** Its profile: the site's nav and footer, the wallet's landing page, README.md and SUPPORT.md link it. */
+export const X_URL = `https://x.com/${X_ACCOUNT}`;
+
 /** This machine: `localhost`, 127.x, `[::1]`. */
 const LOCAL_HOST = /^(localhost|127(\.\d{1,3}){3}|\[::1\])$/i;
 

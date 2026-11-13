@@ -4,9 +4,9 @@
 // render, raise no CSP violation and log no error, show strangers' text as text (no markup runs,
 // no `javascript:` link), and read v1's rules right: dropped vs failed receipts, tips, names
 // signed as names, expired and reserved names, hunts' cancel rule, staking's groups.
-import type { Tx } from "@blockula/sdk";
+import { xLinkCode, type Tx } from "@blockula/sdk";
 import { GUESTBOOK, GUESTBOOK_LONG, HOSTILE, HOSTILE_ABORT, HOSTILE_EVENT, HOSTILE_METHOD, LONG_KEY, LONG_POP, PHONE, PROGRAM, seedWorld, TRICKORTREAT, type World } from "./explorer-world";
-import { RPC } from "./env";
+import { CHAIN_ID, GENESIS, RPC } from "./env";
 import { addressOf, VALIDATOR } from "./mock-node";
 import { createWallet, cspViolations, expect, test, watchCsp } from "./helpers";
 import type { Locator, Page } from "@playwright/test";
@@ -88,6 +88,36 @@ test.describe("every explorer page", () => {
     await visit(page, "/account/nosuch.boo", (p) => p.getByRole("heading", { name: "nosuch.boo isn't anyone's" }), errors);
 
     await visit(page, "/trace/vlad.boo", (p) => p.getByRole("heading", { name: "Around vlad.boo" }), errors);
+  });
+
+  test("a linked X handle shows on the account and its names, beside its proof post (docs/X-LINKING.md)", async ({ page, node }) => {
+    const owner = node.keysOf(w.mina).keys().next().value as string;
+    const record = (memo: string, o: { from?: string; signer?: string } = {}) =>
+      node.add({ kind: "transfer", from: o.from ?? w.mina, to: w.mina, amount: 0n, fee: 64_920n, memo, summary: "mina.boo sent 0 FANG to mina.boo", action: { type: "transfer", to: w.mina, amount: "0" }, signer: o.signer ?? owner });
+    const chip = page.getByTestId("x-link");
+
+    // No record yet; a payment from someone else with the memo, and an agent key's record, aren't one.
+    record("x-link:v1:impostor:66", { from: w.stranger });
+    record("x-link:v1:agent_handle:67", { signer: "a9".repeat(32) });
+    await visit(page, "/account/mina.boo", (p) => p.getByRole("heading", { name: "mina.boo" }), errors);
+    await expect(chip).toHaveCount(0);
+
+    // The account's own record, signed by its owner key.
+    record("x-link:v1:BlockulaChain:20");
+    await visit(page, "/account/mina.boo", (p) => p.getByTestId("x-link"), errors);
+    await expect(chip.getByRole("link", { name: "x · @BlockulaChain" })).toHaveAttribute("href", "https://x.com/BlockulaChain");
+    await expect(chip.getByRole("link", { name: "claimed · proof post" })).toHaveAttribute("href", "https://x.com/BlockulaChain/status/20");
+    // What the post must hold: the code for this chain, this account and that handle.
+    await expect(page.getByTestId("x-proof")).toHaveAttribute("title", new RegExp(xLinkCode({ chainId: CHAIN_ID, genesisHash: GENESIS }, w.mina, "BlockulaChain")));
+
+    // Its name's page shows its owner's link.
+    await visit(page, "/name/mina", (p) => p.getByTestId("name-x").getByTestId("x-link"), errors);
+    await expect(page.getByTestId("name-x")).toContainText("x · @BlockulaChain");
+
+    // Unlinked: the newest record ends it.
+    record("x-unlink:v1");
+    await visit(page, "/account/mina.boo", (p) => p.getByRole("heading", { name: "mina.boo" }), errors);
+    await expect(chip).toHaveCount(0);
   });
 
   // A receipt for every kind, a quarter of them per test: each page load is a server render, so
@@ -728,6 +758,59 @@ test.describe("the explorer from an account holder's side", () => {
     }
     expect([...shown].filter((text) => text.includes("pushed out of view"))).toEqual([]);
     expect(errors).toEqual([]);
+  });
+
+  test("linking an X account: the code, the record signed by this device, the chip, and unlinking", async ({ page, node }) => {
+    node.credit(me, "5");
+    const code = xLinkCode({ chainId: CHAIN_ID, genesisHash: GENESIS }, me, "BlockulaChain");
+    await page.goto("/x");
+    await page.getByRole("button", { name: "Unlock with passkey" }).click();
+    await expect(page.getByRole("heading", { name: "Link your X account" })).toBeVisible();
+    await expect(page.getByTestId("x-linked")).toHaveCount(0);
+
+    // Step 1: the post, with the code for this account and that handle.
+    await page.getByLabel("Your X handle").fill("not a handle");
+    await expect(page.getByTestId("x-step-code")).toContainText("An X handle is 1 to 15 letters, digits or underscores.");
+    await page.getByLabel("Your X handle").fill("@BlockulaChain");
+    await expect(page.getByTestId("x-post-text")).toHaveText(`Verifying my Blockula account vlad.boo.\n\n${code}`);
+    await expect(page.getByRole("link", { name: "Post it on X ↗" })).toHaveAttribute("href", `https://x.com/intent/post?text=${encodeURIComponent(`Verifying my Blockula account vlad.boo.\n\n${code}`)}`);
+
+    // Step 2: a post under another handle is refused before anything is signed; the right one is recorded.
+    const step = page.getByTestId("x-step-record");
+    await step.getByLabel("Link to your post").fill("https://x.com/impostor/status/21");
+    await step.getByRole("button", { name: "Preview" }).click();
+    await expect(step).toContainText("under @impostor, not @BlockulaChain");
+    await step.getByLabel("Link to your post").fill("https://x.com/BlockulaChain/status/20?s=20");
+    await step.getByRole("button", { name: "Preview" }).click();
+    await expect(step.getByTestId("action-preview").locator(".headline")).toHaveText("Record @BlockulaChain as this account's X account");
+    await expect(step.getByTestId("memo")).toContainText("x-link:v1:BlockulaChain:20");
+    const before = node.submitted.length;
+    await step.getByRole("button", { name: "Sign & send" }).click();
+    await expect(receipt(page)).toBeVisible();
+    expect(node.submitted.length).toBe(before + 1);
+    const tx = node.submitted.at(-1) as Tx;
+    expect([tx.from, tx.action, tx.memo]).toEqual([me, { type: "transfer", to: me, amount: "0" }, "x-link:v1:BlockulaChain:20"]);
+    expect(await cspViolations(page)).toEqual([]);
+
+    // The account's page shows it, and its holder can change it.
+    await visit(page, `/account/${me}`, (p) => p.getByTestId("x-link"), errors);
+    await expect(page.getByTestId("x-link")).toContainText("x · @BlockulaChain");
+    await expect(page.getByTestId("x-manage")).toHaveText("Change X link");
+
+    // Unlink.
+    await page.goto("/x");
+    await page.getByRole("button", { name: "Unlock with passkey" }).click();
+    const linked = page.getByTestId("x-linked");
+    await expect(linked).toContainText("x · @BlockulaChain");
+    await linked.locator("summary").click();
+    await linked.getByRole("button", { name: "Preview" }).click();
+    await expect(linked.getByTestId("memo")).toContainText("x-unlink:v1");
+    await linked.getByRole("button", { name: "Sign & send" }).click();
+    await expect(receipt(page)).toBeVisible();
+    expect((node.submitted.at(-1) as Tx).memo).toBe("x-unlink:v1");
+    await visit(page, `/account/${me}`, (p) => p.getByTestId("x-manage"), errors);
+    await expect(page.getByTestId("x-link")).toHaveCount(0);
+    await expect(page.getByTestId("x-manage")).toHaveText("Link X");
   });
 
   test("notices stop when the node turns out to be on another chain (audit main13-signing-5)", async ({ page, node }) => {
