@@ -115,6 +115,12 @@
 //! | `open_games` (view) | — | | a `vec<u64>` of the open hands' ids | |
 //! | `commitment` (view) | k 8 | | commitment `c_k`, while no bet has taken it | |
 //!
+//! **Limits the owner can't set.** Besides amounts within the supply and block counts from 1 to
+//! 2^40: `idle_blocks` and `seed_blocks` are at least 20 and `reveal_blocks` at most 86,400. The
+//! owner sets the limits while hands are open and the dealer knows their cards, so a player is
+//! never given too little time to move or to reveal a seed, and the dealer never so much that a
+//! stall has no end.
+//!
 //! **Events of a hand.**
 //! - `bet`: game 8 ‖ player 32 ‖ stake 8 ‖ seed hash 32 (a relayed bet: its client seed) ‖
 //!   commitment 32 ‖ deadline 8 ‖ flags 1 ‖ post id 8 (129).
