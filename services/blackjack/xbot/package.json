@@ -8,7 +8,10 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc",
-    "test": "tsc --noEmit -p tsconfig.test.json"
+    "test": "tsc --noEmit -p tsconfig.test.json && tsx test/parse.ts && tsx test/copy.ts && tsx test/store.ts && tsx test/limits.ts && tsx test/links.ts && tsx test/bot.ts && tsx test/threads.ts && tsx test/no-x.ts",
+    "test:live": "tsx test/live.ts",
+    "fixtures": "tsx test/gen-threads.ts",
+    "test:live:chain": "bash test/local-chain.sh"
   },
   "license": "MIT",
   "dependencies": {
