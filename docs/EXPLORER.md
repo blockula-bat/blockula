@@ -66,7 +66,7 @@ Borrowed from the explorers worth borrowing from, without copying any of them:
 
 | Route | What |
 |---|---|
-| `/explore` | The pulse: live block ribbon, cadence, proposer share, chain figures, latest transactions, mempool |
+| `/explore` | The pulse: live block ribbon, cadence, proposer share, chain figures (with the boos active this week: `/api/status`' `pulse`), latest transactions, mempool |
 | `/boos` | Boos: everyone on the chain by `.boo` name (`/api/accounts`, `/api/names`): richest, newest active or alphabetical, a search box, the newest names, and Send on each row |
 | `/block/{height}` | A block in context: neighbors on a ribbon, proposer, hashes, certificate, transactions |
 | `/tx/{id}` | The receipt: summary, lifecycle trace, balance changes, signer key, details, raw |
@@ -108,9 +108,13 @@ it lands on the receipt. It signs by the SDK's rules:
   `wallet.build((height) => …)` from the status read that `valid_until` is counted from, and
   days are the chain's fixed block time (`BLOCKS_PER_DAY`), never the node's word.
 - **What isn't offered here.** Votes, multisig approvals and Séance judgments bind what was
-  shown (a digest), so they're signed where it's shown: Governance, and the CLI's
-  `gov vote`, `multisig approve` and `contrib vote`. Keys join an account only through their
-  grant code, on Devices & agents. Unstaking is by amount (the chain converts it at its own
+  shown (a digest), so they're signed where it's shown: Governance, Shared accounts
+  (`/shared/review`, which renders a pending action from the action and signs its digest), and
+  the CLI's `gov vote`, `multisig approve` and `contrib vote`. Keys join an account only through
+  their grant code, on Devices & agents and Shared accounts. A multisig account's page shows its
+  threshold, owners and open actions, each with a link to its review page; Shared accounts
+  (`/shared`) proposes these same forms' actions for one, wrapped in `multisig_propose`
+  (`web/lib/multisig.ts` `asProposal`). Unstaking is by amount (the chain converts it at its own
   price); all of a stake is on Stake. Browser-only keys never open on mainnet, here as in the
   wallet's own unlock.
 

@@ -114,7 +114,7 @@ export const approveCommand = (id: number, account: string, digest: string) => `
 
 /** programs.ts and the account page say it the same way (CRE-3). */
 export const MULTISIG_APPROVALS =
-  "Owners approve with the CLI (`blockula multisig approve`), which signs with a key file. Passkey owners can't approve in the wallet yet, so a multisig whose owners are passkeys can't approve anything for now.";
+  "Owners approve in the wallet (Shared accounts → Review & approve, with their passkey) or with the CLI (`blockula multisig approve --digest`, which signs with a key file). An agent that is an owner can approve payments within its limits through the MCP (`multisig_approve`).";
 
 // ---------------------------------------------------------------------------------------------
 // Contribution pages (CONTRIB-2, CONTRIB-4, CONTRIB-16).

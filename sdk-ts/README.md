@@ -182,6 +182,18 @@ await wallet.transferName("vlad", "alice.boo");               // an offer: alice
 await wallet.multisigCreate([phoneKeyId, laptopKeyId, kitKeyId], 2);
 ```
 
+**Shared accounts for people and agents.** A multisig's owners are the account's owner keys, so a person's passkey and an agent's key can co-own one account. `multisigCreate` must list exactly the account's owner keys, so each co-owner is added first, with its own consent: `encodeKeyGrant(await theirWallet.keyGrant(account))` on their side, `wallet.addOwnerKey(grantCode, label)` on yours. It can't be undone: afterwards owner keys sign only proposals and approvals (the threshold changes by proposing `multisig_create` again).
+
+```ts
+await agent.actAs(account);                                    // the agent's key is one of the owner keys
+await agent.multisigPropose({ type: "transfer", to: "alice.boo", amount: "2000000000" }); // its approval is the first
+const { pending } = await client.multisig(account);           // the other owner reads it …
+const { does, readable } = reviewAction(pending[0].action);   // … described from the action, never the node's `summary`
+if (readable) await wallet.multisigApprove(pending[0].id, { action: pending[0].action }); // binds actionDigest(action); reaching the threshold runs it
+```
+
+The wallet does the same with passkeys on its Shared accounts pages (`/shared`; a co-sign link is `/shared/review?account=<address>&id=<n>&digest=<actionDigest>`), and the MCP with `multisig_show`, `multisig_propose_send` and `multisig_approve` (payments only).
+
 - Every tag 30–49 has a helper: `delegate`, `undelegate`, `redelegate`, `withdrawUnbonded`, `updateValidator`, `unjail`, `propose`, `vote`, `unlock`, `multisigCreate` / `multisigPropose` / `multisigApprove`, `renewName`, `transferName` (an offer the recipient takes with `acceptName`; `withdrawNameOffer`), `releaseName`, `claimDistribution`, and the low-level validator ones (`reportEquivocation`, `beaconCommit`, `beaconReveal`, `attestRevert`); tags 60–61 are a set of one or two's `admitValidator` (a member's consensus key admits a candidate) and `validatorReady` (candidate nodes send it). They check their arguments before signing, resolve `.boo` names to the addresses they sign, and wait for the block.
 - `proposal.*` builds every `ProposalKind`: `paramChange`, `treasurySpend`, `distribution`, `setRepo`, `grantSoul`, `flagSybil`, `unflagSybil` (its appeal), `rejectClaim`, `clawback`, `unlinkGithub`, `refundHunt`, `scheduleUpgrade`, `cancelUpgrade`, `activateFeature`, `deactivateFeature`, `text`. `propose` bonds the chain's `proposal_deposit` unless you pass `deposit`.
 - `convictionWeight(amount, conviction)` is a vote's weight: 0.1× with no lock, then 1×–6× for 1, 2, 4, 8, 16 or 32 lock periods (`CONVICTION_PERIODS`).

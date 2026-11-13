@@ -65,6 +65,8 @@ pub struct Node {
     /// Whether this node serves program views, with how much fuel, and how many run at once
     /// (programs/view_api.rs).
     pub(crate) views: Arc<crate::programs::view_api::ViewGate>,
+    /// How many accounts were active lately (pulse.rs), counted again about once a minute.
+    pulse: Arc<crate::pulse::PulseCache>,
 }
 
 /// When this process started (unix seconds), for `blockula_process_start_time_seconds`.
@@ -343,7 +345,7 @@ impl Node {
             (c.live.clone(), c.halt.signal.clone(), c.me(), c.role)
         };
         let http = reqwest::Client::builder().timeout(FORWARD_TIMEOUT).build().expect("an HTTP client with a timeout");
-        Self { chain, live, marshal, peers, http, client_ip, limits: Default::default(), reads: Arc::new(ReadLimiter::new(READ_RPS, READ_BURST)), timeout: HTTP_TIMEOUT, stats: Default::default(), extra_metrics: None, github_cache: Default::default(), checkpoint_height: 0, halt, protection: None, p2p_peers: None, me, views: crate::programs::view_api::ViewGate::for_role(role) }
+        Self { chain, live, marshal, peers, http, client_ip, limits: Default::default(), reads: Arc::new(ReadLimiter::new(READ_RPS, READ_BURST)), timeout: HTTP_TIMEOUT, stats: Default::default(), extra_metrics: None, github_cache: Default::default(), checkpoint_height: 0, halt, protection: None, p2p_peers: None, me, views: crate::programs::view_api::ViewGate::for_role(role), pulse: Default::default() }
     }
 
     /// Whether this node serves program views, and the most fuel one may use (`None`: the
@@ -351,6 +353,12 @@ impl Node {
     /// validator doesn't (docs/PROGRAMS-V0.md §8.2): `on` turns them on for either, and never off.
     pub fn with_program_views(mut self, on: bool, max_fuel: Option<u64>) -> Self {
         self.views = crate::programs::view_api::ViewGate::new(self.views.enabled() || on, max_fuel);
+        self
+    }
+
+    /// Accounts (addresses or names: `--pulse-exclude`) the pulse doesn't count, such as house bots.
+    pub fn with_pulse_exclude(mut self, bots: Vec<String>) -> Self {
+        self.pulse = Arc::new(crate::pulse::PulseCache::new(bots));
         self
     }
 
@@ -996,6 +1004,8 @@ async fn status(State(n): State<Node>) -> ApiResult {
         "burned_display": fmt_fang(st.burned),
         "accounts": st.accounts.len(),
         "names": st.names.len(),
+        // Accounts active lately, not validators, programs, system accounts or bots (pulse.rs).
+        "pulse": n.pulse.get(&v).to_json(|a| label(&v, a)),
         "mempool": n.live.mempool().len(),
         "version": VERSION,
         "git_sha": GIT_SHA,
@@ -1393,6 +1403,8 @@ async fn metrics(State(n): State<Node>) -> Response {
         if let Some(h) = halt {
             let _ = writeln!(out, "# HELP blockula_halt_info Why the node halted\n# TYPE blockula_halt_info gauge\nblockula_halt_info{{kind=\"{}\"}} 1", h.kind());
         }
+        // The pulse (pulse.rs): accounts active lately, as people.
+        out.push_str(&n.pulse.get(&v).metrics());
         // Programs (programs/api.rs): nothing until programs first switch on.
         out.push_str(&crate::programs::api::metrics(&v));
         out.push_str(&crate::programs::view_api::metrics(&v));
@@ -3519,6 +3531,67 @@ mod http_tests {
         assert_eq!(get("/api/names?sort=fame").await.0, StatusCode::BAD_REQUEST);
         let (_, a, _) = get("/api/accounts?limit=100000").await;
         assert!(a["accounts"].as_array().unwrap().len() <= PEOPLE_PAGE_MAX);
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    /// The pulse on /api/status and /metrics: accounts active in the last day and week, not the
+    /// validator (the faucet's sender) and not the accounts `--pulse-exclude` names, by address or
+    /// by name; recounted after about a minute of blocks.
+    #[tokio::test]
+    async fn pulse_counts_people_not_validators_or_bots() {
+        let (root, n) = node("pulse");
+        let keys: Vec<_> = (21u8..25).map(|i| crate::crypto::Keys::from_seed([i; 32])).collect();
+        let register = {
+            let mut c = n.chain.lock();
+            // The test chain's faucet float is small: 6 FANG for the name's price, 1 for the rest.
+            for (k, fang) in keys.iter().zip([6, 1, 1, 1]) {
+                c.faucet(&k.address(), fang * DROPS_PER_FANG).unwrap();
+                c.produce_block().unwrap();
+            }
+            let k = &keys[0];
+            let mut t = Tx { chain_id: "pulse".into(), genesis_hash: c.genesis_hash.clone(), from: k.address(), nonce: 0, fee: 0, tip: 0, valid_until: c.height() + 10, action: Action::RegisterName { name: "housebot".into() }, memo: String::new(), public_key: hex::encode(k.public_key()), signature: "00".repeat(crate::crypto::SIGNATURE_LEN) };
+            t.fee = min_fee(t.size());
+            c.submit(t.sign(k)).unwrap();
+            c.produce_block().unwrap();
+            c.height()
+        };
+        // Nobody excluded: the four the faucet paid, never the validator that paid them.
+        let (s, st, _) = call(&n, "GET", "/api/status", None, "127.0.0.1:1").await;
+        assert_eq!(s, StatusCode::OK);
+        let p = &st["pulse"];
+        assert_eq!((p["active_7d"].as_u64(), p["active_1d"].as_u64(), p["as_of"].as_u64()), (Some(4), Some(4), Some(register)), "{p}");
+        let week = &p["windows"][0];
+        assert_eq!((week["window"].as_str(), week["blocks"].as_u64(), week["from"].as_u64(), week["complete"].as_bool()), (Some("7d"), Some(604_800), Some(1), Some(true)));
+        assert_eq!((week["excluded"]["validators"].as_u64(), week["excluded"]["bots"].as_u64()), (Some(1), Some(0)));
+        assert!(p["bots"].as_array().unwrap().is_empty() && p["unavailable"].is_null());
+        // A house bot by name, another by address, and a name nobody holds.
+        let n = n.with_pulse_exclude(vec!["housebot.boo".into(), keys[1].address(), "nobody.boo".into()]);
+        let (_, st, _) = call(&n, "GET", "/api/status", None, "127.0.0.1:1").await;
+        let p = &st["pulse"];
+        assert_eq!((p["active_7d"].as_u64(), p["windows"][0]["excluded"]["bots"].as_u64()), (Some(2), Some(2)), "{p}");
+        let bots: Vec<&str> = p["bots"].as_array().unwrap().iter().map(|b| b["address"].as_str().unwrap()).collect();
+        assert_eq!(bots, [keys[0].address(), keys[1].address()]);
+        assert_eq!(p["bots"][0]["name"].as_str(), Some("housebot.boo"));
+        assert_eq!(p["bots_unresolved"], json!(["nobody.boo"]));
+        let (_, _, text) = call(&n, "GET", "/metrics", None, "127.0.0.1:1").await;
+        assert!(text.contains("blockula_accounts_active{window=\"7d\"} 2\n") && text.contains("blockula_accounts_active{window=\"1d\"} 2\n"), "{text}");
+        assert!(text.contains("blockula_accounts_active_complete{window=\"7d\"} 1\n"), "{text}");
+        // The count is kept for about a minute of blocks (60 at the test chain's 1 s), then redone.
+        {
+            let mut c = n.chain.lock();
+            c.faucet(&crate::crypto::Keys::from_seed([30; 32]).address(), DROPS_PER_FANG).unwrap();
+            c.produce_block().unwrap();
+        }
+        let (_, st, _) = call(&n, "GET", "/api/status", None, "127.0.0.1:1").await;
+        assert_eq!((st["pulse"]["active_7d"].as_u64(), st["pulse"]["as_of"].as_u64()), (Some(2), Some(register)), "cached");
+        {
+            let mut c = n.chain.lock();
+            for _ in 0..60 {
+                c.produce_block().unwrap();
+            }
+        }
+        let (_, st, _) = call(&n, "GET", "/api/status", None, "127.0.0.1:1").await;
+        assert_eq!(st["pulse"]["active_7d"].as_u64(), Some(3), "recounted: {}", st["pulse"]);
         std::fs::remove_dir_all(root).ok();
     }
 

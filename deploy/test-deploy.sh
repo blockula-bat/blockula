@@ -60,6 +60,8 @@ refute "validator: the node never sees VALIDATOR_KEY_B64" "$(log)" "key_env=set"
 # Later boots (the secret deleted from Fly, or still in a stale machine config): the volume's key.
 code=$(entry "$d" ROLE=validator HTTP_PORT=7333)
 [ "$code" = 0 ] && expect "validator: restarts from the volume alone (HTTP_PORT sets its HTTP port)" "$(log)" "run --home $d/home --port 7333 --bind ::" || bad "validator: restart exited $code: $(cat "$T/out")"
+code=$(entry "$d" ROLE=validator PULSE_EXCLUDE="trickortreat.boo, guestbook.boo")
+[ "$code" = 0 ] && expect "validator: PULSE_EXCLUDE becomes --pulse-exclude, one per account" "$(log)" "run --home $d/home --bind :: --pulse-exclude trickortreat.boo --pulse-exclude guestbook.boo | key_env=" || bad "validator: PULSE_EXCLUDE exited $code: $(cat "$T/out")"
 code=$(entry "$d" ROLE=validator VALIDATOR_KEY_B64="$(printf '%s\n' "$(printf '77%.0s' $(seq 32))" | base64 | tr -d '\n')")
 [ "$(cat "$d/home/validator.key")" = "$SEED" ] && refute "validator: a secret never replaces the volume's key, nor reaches the node" "$(log)" "key_env=set" || bad "validator: key replaced"
 # A volume that held a key once and lost it, or never had one and no secret: refuse.

@@ -4,7 +4,7 @@
 // shapes (node/src/api.rs). Submitted txs are checked like the real node does it: ML-DSA
 // signature over the SDK's signing bytes, the signing key authorized on `from` (owner keys for
 // key changes), nonce and balance. e2e/explorer-world.ts fills it with a little of everything.
-import { formatFang, keyId as keyIdOf, parseFang, proposalDigest, signingBytes, txSize, verifyKeyGrant, type ProposalKind, type Tx } from "@blockula/sdk";
+import { actionDigest, formatFang, keyId as keyIdOf, parseFang, proposalDigest, signingBytes, txSize, verifyKeyGrant, type Action, type ProposalKind, type Tx } from "@blockula/sdk";
 import { hexToBytes } from "@noble/hashes/utils.js";
 import { ml_dsa65 } from "@noble/post-quantum/ml-dsa.js";
 import { createHash } from "node:crypto";
@@ -68,6 +68,10 @@ export function keyIdOfAddress(address: string) {
   const { words } = bech32m.decode(address as `${string}1${string}`);
   return Buffer.from(bech32m.fromWords(words)).toString("hex");
 }
+
+/** A pending multisig proposal and a multisig account, as node/src/api.rs `multisig` serves them. */
+interface MultisigPending { id: number; action: Json; summary: string; proposed_by: string; approvals: string[]; valid_approvals: number; created_at: number; expires_at: number; expired: boolean; superseded: string | null }
+interface MultisigRec extends Json { threshold: number; owners: { key_id: string; label: string | null }[]; pending: MultisigPending[] }
 
 class HttpError extends Error {
   constructor(readonly status: number, message: string) {
@@ -134,7 +138,9 @@ export class MockNode {
   seances: Json[] = [];
   souls: Json[] = [];
   contributions: Json | null = null;
+  /** Multisig accounts as `/api/multisig` serves them, by address. A test may rewrite a pending `summary` or `action`: a lying node. */
   multisigs = new Map<string, Json>();
+  private multisigIds = 0;
   /** Deployed programs (protocol v2) as /api/program serves them, by address; stored code and interfaces by hash. */
   programs = new Map<string, Json>();
   /** Whether it serves `/api/programs` (a node from before that route doesn't: the page then scans recent blocks). */
@@ -446,6 +452,10 @@ export class MockNode {
     if (tx.nonce !== a.nonce) throw new HttpError(400, `bad nonce: expected ${a.nonce}, got ${tx.nonce}`);
     const fee = BigInt(tx.fee);
     const act = tx.action;
+    // As node/src/governance.rs `check_multisig_admission`: a multisig's owner keys only propose and approve.
+    const shared = this.multisigs.get(tx.from) as MultisigRec | undefined;
+    if (shared && key.role.type === "owner" && act.type !== "multisig_propose" && act.type !== "multisig_approve")
+      throw new HttpError(400, `${this.label(tx.from).short} is a ${shared.threshold}-of-${this.ownerKeys(tx.from).length} multisig: propose this with multisig_propose`);
     const amount = act.type === "transfer" ? BigInt(act.amount) : 0n;
     if (a.balance < amount + fee) throw new HttpError(400, `insufficient balance: has ${formatFang(a.balance)}, needs ${formatFang(amount + fee)}`);
     let to: string | null = null;
@@ -471,6 +481,41 @@ export class MockNode {
       if (!this.accounts.has(to)) this.opening = to;
       this.acct(to).balance += amount;
       summary = `${this.label(tx.from).short} sent ${formatFang(amount)} to ${this.label(to).short}`;
+    } else if (act.type === "multisig_create") {
+      // As governance.rs `multisig_create`: exactly the account's owner keys, 1 ≤ threshold ≤ owners.
+      if (key.role.type !== "owner") throw new HttpError(400, "only owner keys can set up a multisig");
+      const current = this.ownerKeys(tx.from);
+      if (new Set(act.owners).size !== current.length || !current.every((k) => act.owners.includes(k))) throw new HttpError(400, `owners must be exactly this account's ${current.length} owner key(s); add or remove keys first`);
+      if (act.threshold < 1 || act.threshold > current.length) throw new HttpError(400, `threshold must be 1–${current.length}`);
+      this.multisigs.set(tx.from, { account: this.label(tx.from), threshold: act.threshold, owners: this.multisigOwners(tx.from), created_at: this.height + 1, pending: [] });
+      summary = `${this.label(tx.from).short} became a ${act.threshold}-of-${current.length} multisig`;
+    } else if (act.type === "multisig_propose" || act.type === "multisig_approve") {
+      // As governance.rs `multisig_propose` / `multisig_approve`: an approval binds the stored
+      // action's digest, and the one that reaches the threshold runs the action as the account.
+      if (key.role.type !== "owner") throw new HttpError(400, `only owner keys can ${act.type === "multisig_propose" ? "propose" : "approve"} multisig actions`);
+      if (!shared) throw new HttpError(400, `${this.label(tx.from).short} isn't a multisig account`);
+      const owners = this.ownerKeys(tx.from);
+      let p: MultisigPending;
+      if (act.type === "multisig_propose") {
+        const ids = [...this.multisigs.values()].flatMap((m) => (m as MultisigRec).pending.map((x) => x.id));
+        this.multisigIds = Math.max(this.multisigIds, ...ids.map((i) => i + 1));
+        p = { id: this.multisigIds++, action: act.action as unknown as Json, summary: `${this.label(tx.from).short} proposed a multisig action`, proposed_by: signer, approvals: [signer], valid_approvals: 1, created_at: this.height + 1, expires_at: this.height + 1 + 604_800, expired: false, superseded: null };
+        summary = p.summary;
+      } else {
+        const found = shared.pending.find((x) => x.id === act.id);
+        if (!found) throw new HttpError(400, `no open multisig action #${act.id}`);
+        if (found.expired) throw new HttpError(400, `multisig action #${act.id} expired at block ${found.expires_at}`);
+        if (actionDigest(found.action as unknown as Action) !== act.action_digest) throw new HttpError(400, `multisig action #${act.id} isn't the action this approval was signed for: the node it was read from may be misreporting it`);
+        if (found.approvals.includes(signer)) throw new HttpError(400, `this key already approved multisig action #${act.id}`);
+        p = found;
+        p.approvals.push(signer);
+        summary = `${this.label(tx.from).short} approved multisig action #${act.id}`;
+      }
+      p.valid_approvals = p.approvals.filter((k) => owners.includes(k)).length;
+      shared.pending = shared.pending.filter((x) => x.id !== p.id);
+      if (p.valid_approvals >= shared.threshold) to = this.runMultisig(tx.from, p, fee);
+      else shared.pending.push(p);
+      shared.owners = this.multisigOwners(tx.from);
     } else if (act.type === "register_name") {
       this.names.set(act.name, tx.from);
       summary = `${this.label(tx.from).short} claimed ${act.name}.boo`;
@@ -579,7 +624,6 @@ export class MockNode {
         case "withdraw_vested":
         case "unjail":
         case "update_validator":
-        case "multisig_propose":
           summary = `${who}: ${act.type.replace(/_/g, " ")}`;
           break;
         default:
@@ -598,6 +642,46 @@ export class MockNode {
     const signedTo = act.type === "transfer" || act.type === "award_hunt" || act.type === "transfer_name" ? act.to : act.type === "vouch" ? act.account : null;
     const toName = signedTo && !/^t?boo1/.test(signedTo) ? `${signedTo.replace(/\.boo$/, "")}.boo` : null;
     return this.record({ tx, kind: act.type, from: tx.from, to, toName, amount: act.type === "transfer" ? amount : null, fee, maxFee: fee, tip: BigInt(tx.tip ?? 0), signer, nonce: tx.nonce, memo: tx.memo, summary });
+  }
+
+  /** The account's owner key ids, as node/src/governance.rs `owner_keys`. */
+  ownerKeys(address: string): string[] {
+    return [...this.keysOf(address)].filter(([, k]) => k.role.type === "owner").map(([id]) => id);
+  }
+
+  private multisigOwners(address: string) {
+    return [...this.keysOf(address)].filter(([, k]) => k.role.type === "owner").map(([key_id, k]) => ({ key_id, label: k.label }));
+  }
+
+  /**
+   * Runs an approved multisig action as the account (governance.rs `run_multisig`): a transfer
+   * moves its amount, key changes and a new threshold take effect; anything else the mock only
+   * records. A failure fails the approval too. Returns who it paid, if anyone.
+   */
+  private runMultisig(from: string, p: MultisigPending, fee: bigint): string | null {
+    const a = this.acct(from);
+    const act = p.action as unknown as Action;
+    const fail = (why: string) => new HttpError(400, `multisig action #${p.id}: ${why}`);
+    if (act.type === "transfer") {
+      const amount = BigInt(act.amount);
+      if (a.balance < amount + fee) throw fail(`insufficient balance: has ${formatFang(a.balance)}, needs ${formatFang(amount + fee)}`);
+      const to = this.resolve(act.to);
+      a.balance -= amount;
+      this.acct(to).balance += amount;
+      return to;
+    }
+    if (act.type === "add_key" || act.type === "remove_key") {
+      const keys = new Map(this.keysOf(from));
+      if (act.type === "add_key") {
+        if (!verifyKeyGrant({ account: from, key_id: act.key_id, public_key: act.public_key, pop: act.pop }, this.chainId, this.genesisHash)) throw fail("the added key's proof of possession doesn't verify");
+        keys.set(act.key_id, { label: act.label, role: act.role, added_at: this.height + 1 });
+      } else keys.delete(act.key_id);
+      a.keys = keys;
+      const m = this.multisigs.get(from) as MultisigRec;
+      if (this.ownerKeys(from).length < m.threshold) throw fail(`would leave ${this.ownerKeys(from).length} owner key(s), fewer than the threshold (${m.threshold})`);
+    }
+    if (act.type === "multisig_create") (this.multisigs.get(from) as MultisigRec).threshold = act.threshold;
+    return null;
   }
 
   /** One `validator_json` row, for the world's extra groups (leaving, jailed, tombstoned…). */
@@ -797,7 +881,7 @@ export class MockNode {
       if (req.method() === "GET" && path === "/validators") return reply(200, this.validators());
       if (req.method() === "GET" && this.staking && (m = path.match(/^\/staking\/(.+)$/))) return reply(200, this.stakingOf(this.resolve(m[1])));
       if (req.method() === "GET" && this.governance && path.startsWith("/proposals")) return reply(200, { count: this.proposals.length, next_id: this.proposals.length, council_active: true, spending_open: false, params: { supermajority_bps: 6667, voting_blocks: 604_800, timelock_blocks: 172_800, lock_period_blocks: 604_800 }, proposals: this.proposals.map((p) => this.proposalView(p)) });
-      if (req.method() === "GET" && path === "/params") return reply(200, { params: { unbonding_blocks: "1814400", lock_period_blocks: "604800", proposal_deposit: (1000n * 10n ** 9n).toString(), max_validators: "31" }, genesis: { block_time_ms: 1000, epoch_blocks: 3600, address_prefix: "tboo", epochs_per_year: 8766 }, issuance: { year: 1, rate_ppm: 60000 } });
+      if (req.method() === "GET" && path === "/params") return reply(200, { params: { unbonding_blocks: "1814400", lock_period_blocks: "604800", proposal_deposit: (1000n * 10n ** 9n).toString(), max_validators: "31", multisig_expiry_blocks: "604800" }, genesis: { block_time_ms: 1000, epoch_blocks: 3600, address_prefix: "tboo", epochs_per_year: 8766 }, issuance: { year: 1, rate_ppm: 60000 } });
       // The base fee at its genesis floor (node/src/api.rs `fees`): what Wallet.build prices at.
       if (req.method() === "GET" && path === "/fees") return reply(200, { height: this.height, lag: 17, rate_scale: 1000, slots: [], suggested: { flat: "10000", rate: "10000" }, floor: { flat: "10000", per_byte: "10" }, target_fullness_bps: 5000, max_change_bps: 1250, account_creation_fee: "100000000", account_creation_fee_display: "0.1 FANG" });
       return reply(404, { error: `mock node: no route for ${req.method()} ${path}` });

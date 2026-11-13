@@ -15,6 +15,7 @@ import { nodeGet, useNode } from "@/lib/explorer/node";
 import { to } from "@/lib/explorer/routes";
 import type { AccountDetail, ChainStatus, ClaimView, MultisigView } from "@/lib/explorer/types";
 import { keyCode } from "@/lib/format";
+import { reviewHref } from "@/lib/multisig";
 
 // ---------------------------------------------------------------------------------------------
 // GitHub (CONTRIB-12)
@@ -156,6 +157,11 @@ function PendingAction({ p, threshold, labels, address, head }: { p: Pending; th
         <span className="mono small block wrap-any" data-testid="ms-digest">
           digest {digest}
         </span>
+      )}
+      {digest && (
+        <Link className="small" href={reviewHref(address, p.id, digest)} data-testid="ms-review">
+          {approvable ? "Review & approve in the wallet →" : "Open in the wallet →"}
+        </Link>
       )}
       {approvable && digest && <code className="cre-cmd small block wrap-any">{approveCommand(p.id, address, digest)}</code>}
     </li>

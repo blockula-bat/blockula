@@ -72,6 +72,13 @@ export function seedWorld(node: MockNode, vlad: string = addressOf("c1".repeat(3
     node.names.set(name, a);
     node.credit(a, "250");
   }
+  // The pulse (node/src/pulse.rs): the five people above this week, two of them today; the
+  // validators and the house bots aren't counted.
+  const pulseWindow = (w: string, blocks: number, active: number, bots: number) => ({ window: w, blocks, from: Math.max(1, node.height - blocks + 1), complete: true, active, excluded: { validators: 1, programs: 0, system: 0, bots } });
+  node.statusExtra = {
+    ...node.statusExtra,
+    pulse: { active_7d: 5, active_1d: 2, as_of: node.height, windows: [pulseWindow("7d", 604_800, 5, 2), pulseWindow("1d", 86_400, 2, 1)], counts: "accounts whose newest finalized tx (sent, or naming them) is in the window; not validators, programs, system accounts or the accounts this node excludes as bots", bots: [node.label(TRICKORTREAT), node.label(GUESTBOOK)], bots_unresolved: [], unavailable: null },
+  };
   node.names.set("castle", vlad);
   node.nameInfo.set("castle", { offered_to: mina, registered_at: 120 });
   node.names.set("tomb", vlad);
