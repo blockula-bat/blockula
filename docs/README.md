@@ -34,6 +34,7 @@
 | [PROGRAMS-V0.md](PROGRAMS-V0.md) | WebAssembly programs: the specification (experimental) |
 | [PROGRAMS.md](PROGRAMS.md) | Programs: the design they come from |
 | [RANDOMNESS.md](RANDOMNESS.md) | Randomness for programs: the beacon's host functions (protocol v3, preview), the safe pattern and its limits |
+| [BLACKJACK.md](BLACKJACK.md) | Blackjack, a game played with FANG: the program, the dealer, the table page and the X bot in dry run, for whoever runs a table (experimental) |
 | [GHOST-MODE.md](GHOST-MODE.md) | Ghost Mode shielded transfers (built, off until governance activates it) |
 
 ## Design history

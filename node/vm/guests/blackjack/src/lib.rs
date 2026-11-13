@@ -23,6 +23,11 @@
 //! bet's seed isn't the relayer's to pick: it is `BLAKE3("blockula/blackjack/relay" ‖ player ‖
 //! post id)`.
 //!
+//! What this doesn't rule out (docs/BLACKJACK.md, section 2): a bet's seed is public while its
+//! transaction waits, and commitments are taken in order, so a house that wins races for block
+//! space can put a bet of its own in front of one it would lose. A two-transaction bet (commit
+//! to the seed's hash, then reveal it) closes that; rules v1 keep the bet to one transaction.
+//!
 //! **Deadlines.** Whenever the dealer owes a card it has `reveal_blocks` to reveal it, counted
 //! from the bet, the hit or the stand (a partial reveal doesn't extend it). Past that anyone calls
 //! `timeout` and **the player wins**: 3:2 if a natural was still possible or held, else 1:1,
