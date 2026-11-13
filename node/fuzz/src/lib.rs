@@ -36,6 +36,7 @@ mod node_src {
     pub mod program_cli;
     pub mod programs;
     pub mod protection;
+    pub mod pulse;
     pub mod release_cli;
     pub mod replay;
     pub mod setup_cli;
