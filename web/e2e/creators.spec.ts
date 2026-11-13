@@ -136,7 +136,9 @@ test.describe("a creator's public page", () => {
     await expect(page.locator("main")).not.toContainText("would send");
     await expect(page.locator("main")).not.toContainText("would propose");
     await expect(page.locator("main")).not.toContainText(HOSTILE);
-    await expect(page.getByText("Passkey owners can't approve in the wallet yet")).toBeVisible();
+    await expect(page.getByText("Owners approve in the wallet (Shared accounts → Review & approve, with their passkey)")).toBeVisible();
+    // Each open action leads to the wallet's review page, by the account's address, the proposal and its digest.
+    await expect(pending.getByTestId("ms-review")).toHaveAttribute("href", new RegExp(`/shared/review/?\\?account=${ADDR.coven}&id=0&digest=${actionDigest(action)}$`));
 
     // An ordinary account is no multisig.
     await page.goto("/account/vlad.boo");
@@ -302,7 +304,7 @@ test.describe("contribution pages", () => {
     expect(errors).toEqual([]);
   });
 
-  test("program pages say the same, and that passkey owners can't approve a multisig yet", async ({ page }) => {
+  test("program pages say the same, and that shared accounts are approved in the wallet", async ({ page }) => {
     await page.goto("/programs/pool");
     await page.locator("summary", { hasText: "Claim a merged PR" }).click();
     await expect(page.locator("details.action[open]")).toContainText("A bond is held until it's judged: it's returned unless validators refute the claim or the jury marks it spam.");
@@ -312,7 +314,7 @@ test.describe("contribution pages", () => {
     // Mainnet's note is the one D7 spot (lib/creators.ts): checked as that constant, not as words.
     await expect(page.locator(".card-note", { hasText: `On mainnet: ${CONTRIBUTION_NOTES.mainnet}` })).toBeVisible();
     await page.goto("/programs/accounts");
-    await expect(page.locator(".card-note", { hasText: "Passkey owners can't approve in the wallet yet" })).toBeVisible();
+    await expect(page.locator(".card-note", { hasText: "Shared accounts (multisig) have their own pages in the wallet" })).toBeVisible();
     await expect(page.locator("main")).not.toContainText(/contract/i);
     expect(await cspViolations(page)).toEqual([]);
     expect(errors).toEqual([]);

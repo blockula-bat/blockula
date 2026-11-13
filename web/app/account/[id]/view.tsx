@@ -13,6 +13,7 @@ import { XChip, XLinkManage, useXLink } from "@/components/explorer/XLink";
 import { blocksToHuman, keyCode } from "@/lib/format";
 import { nodeExplorer } from "@/lib/config";
 import { multisigRule, multisigShape } from "@/lib/creators";
+import { sharedHref } from "@/lib/multisig";
 import { activityCsv } from "@/lib/explorer/csv";
 import { bySigner, deltaFor, flowsOf, formatDrops, parseDrops } from "@/lib/explorer/ledger";
 import { useNode } from "@/lib/explorer/node";
@@ -235,6 +236,11 @@ export default function AccountPage() {
           </Section>
 
           {ms && <MultisigActions ms={ms} address={addr} head={status.data?.height} />}
+          {ms && (
+            <Link className="small" href={sharedHref(addr)} data-testid="multisig-manage">
+              {yours ? "Propose and approve in Shared accounts →" : "One of its owners? Open it in Shared accounts →"}
+            </Link>
+          )}
 
           {!!a.locks?.length && (
             <Section title={<Term k="locked">Locked</Term>} aside={<span className="dim small">can be staked, not sent</span>}>

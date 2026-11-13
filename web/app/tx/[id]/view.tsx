@@ -1,5 +1,6 @@
 "use client";
 
+import { sharedHref } from "@/lib/multisig";
 import { describeAction } from "@blockula/sdk";
 import Link from "next/link";
 import { useRouteParam } from "@/lib/route-param";
@@ -389,6 +390,8 @@ function TxActions({ t }: { t: TxDetail }) {
   if (kind === "transfer" && !out && t.to?.address === me.address) links.push({ href: `/send?to=${encodeURIComponent(name(t.from))}`, label: `Pay ${label(t.from)} back`, primary: true });
   if (typeof t.action?.hunt_id === "number") links.push({ href: to.hunt(t.action.hunt_id), label: "Open the hunt" });
   if (kind === "add_key" || kind === "remove_key") links.push({ href: "/devices", label: "Devices & agents" });
+  // A shared account's proposals and approvals live on its Shared accounts page.
+  if (kind === "multisig_create" || kind === "multisig_propose" || kind === "multisig_approve") links.push({ href: sharedHref(t.from.address), label: "Open the shared account: its proposals and approvals", primary: kind === "multisig_propose" });
   if (!links.length) return null;
   return (
     <Section title="From here">

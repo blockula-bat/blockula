@@ -70,6 +70,7 @@ export function Header() {
               <Link href="/stake" className={path === "/stake" ? "active" : ""}>Stake</Link>
               <Link href="/governance" className={path === "/governance" ? "active" : ""}>Governance</Link>
               <Link href="/devices" className={path === "/devices" ? "active" : ""}>Devices &amp; agents</Link>
+              <Link href="/shared" className={path.startsWith("/shared") ? "active" : ""}>Shared</Link>
             </>
           )}
           {/* The served wallet has no menu: it talks to the node that served it, and nothing else. */}

@@ -76,7 +76,7 @@ Things to ask it:
 
 The MCP caps each call at `BLOCKULA_MAX_SEND` (100 by default) and each day at `BLOCKULA_MAX_DAILY`. To let it spend from your own account, give it a budget: the wallet's **Devices & agents → Give an agent a budget**, and the steps in [AGENTS.md](../AGENTS.md#rules-of-the-road).
 
-**What it can't do:** sign program transactions (it reads programs with `program_show`, `program_view` and `program_code`; uploads, creates and calls go through the SDK or `blockula program`), make governance proposals, set up multisig accounts or register a validator (use the CLI for those). The full tool list is in [mcp/README.md](../mcp/README.md#tools).
+**What it can't do:** sign program transactions (it reads programs with `program_show`, `program_view` and `program_code`; uploads, creates and calls go through the SDK or `blockula program`), make governance proposals, set up shared (multisig) accounts or change their keys, or register a validator (use the wallet or the CLI for those). On a shared account where its key is an owner it reads with `multisig_show` and proposes and approves payments only (`multisig_propose_send`, `multisig_approve`), inside the same caps. The full tool list is in [mcp/README.md](../mcp/README.md#tools).
 
 ## 2. Change the apps with Claude Code
 
