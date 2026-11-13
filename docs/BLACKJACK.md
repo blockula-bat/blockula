@@ -116,8 +116,20 @@ lose. No rule in a program removes this: refunding an unrevealed bet instead wou
 party cancel exactly the hands a player would have won. What limits it: `seed_blocks` is never
 under 20 blocks and is 300 by default, a signed reveal is valid at any node of the chain until
 its deadline, and a reveal that was submitted and never included is evidence a player can show.
-Play at a table whose chain has block producers the house doesn't control, and submit through a
-node you trust (section 9).
+
+The table page answers the single-node case. It sends each signed `reveal_seed` to the node the
+wallet uses and to every other node the wallet was built to know (its witnesses,
+`NEXT_PUBLIC_*_WITNESSES`: [web/README.md](../web/README.md)), all at once. It is one signed
+transaction, so it runs once and its fee is paid once; one node taking it is enough, and the
+others are still tried. If it isn't in a block when the page stops waiting, the same transaction
+is sent to every node again, and the hand shows a warning for as long as a reveal was signed and
+the hand still waits for its seed: it says the bet goes to the house if the reveal isn't in a
+block by the deadline, and through how many nodes it went. What remains: a wallet with no
+witnesses configured (a custom node, and the wallet a node serves at `/wallet/`, which knows
+only that node) still sends through one node, and says so in the reveal's review and in the
+warning; and nodes or block producers that all work together can still keep a reveal out. So
+build the table's wallet with witnesses the house doesn't run, and play at a table whose chain
+has block producers the house doesn't control (section 9).
 
 **Relayed play trusts the relayer more.** A relayed bet stays one transaction: there is no
 player's wallet to keep a seed, so its seed is derived by the program from the player and the
@@ -128,6 +140,12 @@ seeds as well; made-up ids can be found afterwards by comparing `relayed` events
 player's posts, but nothing on the chain prevents them. The X path is a convenience for small
 stakes with a house the player trusts. Say so wherever the bot is offered. A player who wants
 the guarantees above bets from their own account.
+
+That is the decision for now: relayed play and the X bot stay trusted and small-stakes (the
+grant's low limit per bet and per day is what bounds them), and nothing in the program changes
+for them. Before the X bot goes live, each relayed bet must carry the player's own signature,
+so a relayer can no longer place a bet, pick its moment or make up its post id by itself. That
+isn't built; the bot stays in dry run until it is (section 10).
 
 ## 3. The money
 
@@ -167,7 +185,8 @@ anyone's `timeout` bond nothing.
 | The player: hit or stand | `idle_blocks` (1,800) from the deal or the last card | Anyone calls `timeout`: the player stands, and the dealer finishes the hand. |
 
 The dealer's reveal and a player's move that arrive late still count until someone has called
-`timeout`. A seed doesn't: past its deadline it is refused (section 2).
+`timeout`. A seed doesn't: past its deadline it is refused (abort 72), whether or not anyone has
+called `timeout` yet (section 2). That stays: a late seed is never counted.
 
 ## 5. Limits
 
@@ -192,6 +211,14 @@ an owner who could cut a turn to one block could stand a player before a hit, or
 before its seed), and the dealer is never given more than 86,400 blocks (so a stall always ends
 in a hand the player can claim). Inside those bounds a change applies to deadlines set after
 it: a hand's current deadline is the one it was given.
+
+These values stay as they are: `seed_blocks` is 300 by default, and `set_limits` refuses an
+`idle_blocks` or a `seed_blocks` under 20. The bounds are the whole protection. A hand keeps no
+copy of the limits it was bet under, so a `set_limits` inside the bounds still applies to a hand
+in play: its next deadline (a turn after the next card, the dealer's time after a hit or a
+stand) is counted with the new numbers. That is accepted, and no per-hand snapshot is planned
+([BLACKJACK_REVIEW.md](BLACKJACK_REVIEW.md), BJ-02). An operator changes limits with the table
+paused and no hand open, and players can see every change (a `limits` event).
 
 `pause(true)` refuses new bets (`bet`, `relay_bet`) and nothing else: a bet waiting for its seed
 can still be opened, open hands play on, timeouts, deposits and withdrawals work.
@@ -288,19 +315,19 @@ the pause. `HANDS=60 scripts/blackjack-e2e.sh` is the short form.
 
 The most each method used in `node/vm/tests/blackjack.rs` (schedule v0, `program_max_tx_fuel`
 10,000,000), instantiation included. A transaction also pays the code's load at admission:
-897,040 for the 22,176-byte module.
+905,680 for the 22,392-byte module.
 
 | Method | Most fuel | Method | Most fuel |
 |---|---|---|---|
-| `reveal` (6 links; about 98,500 a link, 12 at most) | 591,108 | `bet` | 219,516 |
-| `commit_batch` (64 commitments) | 593,989 | `relay_bet` | 264,708 |
-| `skip_commits` | 322,907 | `timeout` | 218,552 |
-| `relay_withdraw` | 169,571 | `reveal_seed` | 163,559 |
-| `withdraw` | 151,836 | `hit`, `stand` | 122,752 |
-| `deposit` | 145,560 | `relay_hit`, `relay_stand` | 151,109 |
-| `init` | 142,479 | `set_relayer` | 141,640 |
-| the views | 91,402 to 124,632 | `defund` | 126,014 |
-| the owner's other calls | 110,301 to 116,651 | `revoke` | 120,617 |
+| `reveal` (6 links; about 97,800 a link, 12 at most) | 586,708 | `bet` | 219,546 |
+| `commit_batch` (64 commitments) | 594,019 | `relay_bet` | 264,780 |
+| `skip_commits` | 322,937 | `timeout` | 218,582 |
+| `relay_withdraw` | 169,643 | `reveal_seed` | 163,589 |
+| `withdraw` | 151,866 | `hit`, `stand` | 122,782 |
+| `deposit` | 145,590 | `relay_hit`, `relay_stand` | 151,181 |
+| `init` | 142,509 | `set_relayer` | 141,670 |
+| the views | 91,432 to 124,662 | `defund` | 126,044 |
+| the owner's other calls | 110,331 to 116,681 | `revoke` | 120,647 |
 
 The longest reveal there can be (a hit to 21 and an eleven-card dealer hand) is about 1.3 million.
 
@@ -311,11 +338,18 @@ The longest reveal there can be (a hit to 21 and an eleven-card dealer hand) is 
 - **Relayed play gives the relayer a last look**, and its seeds come from post ids the relayer
   supplies (section 2; [BLACKJACK_REVIEW.md](BLACKJACK_REVIEW.md), BJ-03). Relayed bets don't go
   through the seed's commit and reveal: there is no player's wallet in that path to keep a seed.
-  The bot is dry run only.
+  Relayed play stays trusted and small-stakes for now, and the bot is dry run only: the player's
+  signature on each relayed bet is required before it goes live, and isn't built (section 2).
 - **A seed has to reach the chain in time.** Whoever can keep a player's `reveal_seed` out of
   every block for `seed_blocks` takes that stake, and can choose which (section 2; BJ-04). The
-  table page submits through one node. A wallet that sends the reveal through several, and a
-  chain whose block producers aren't the house's, are what answer it.
+  table page sends each reveal through the wallet's node and every witness it was built with,
+  and warns while a reveal hasn't landed. A wallet built without witnesses (or the one a node
+  serves) still has one node, and says so; nodes and block producers that all work together
+  can still keep a reveal out. Witnesses the house doesn't run, and a chain whose block
+  producers aren't the house's, are what answer it. A late seed stays refused.
+- **Limits apply to hands in play.** `set_limits` inside the program's bounds (section 5)
+  changes the deadlines an open hand is given next. Accepted: a hand takes no snapshot of the
+  limits it was bet under. Change limits with the table paused and empty.
 - **A chain-wide pause of programs stops the players and the dealer too.** Validators can pause
   programs for days (docs/PROGRAMS-V0.md §7.2); deadlines keep counting in blocks, and when the
   pause lifts every open hand is past its deadline. A bet that was waiting for its seed is then
@@ -331,9 +365,12 @@ The longest reveal there can be (a hit to 21 and an eleven-card dealer hand) is 
   `idle_blocks`; with one hand per account and `max_open_games` seats, a few accounts can fill a
   table for that long at the price of playing those hands. Lower `idle_blocks` if it happens. (A
   bet whose seed never comes holds its seat for `seed_blocks` and costs its whole stake.)
-- **Keep `reveal_blocks` well above 12.** Anyone who sees the dealer's reveal in the mempool can
-  submit its first link alone and make the dealer's own transaction fail; each such round still
-  deals a card, so it costs the dealer at most one block per card it owed.
+- **Getting ahead of the dealer's reveal does nothing.** Anyone who sees the dealer's reveal in
+  the mempool can submit its links first (a link is its own authorization). The dealer's
+  transaction then passes over the links the hand already holds and deals the rest; if nothing
+  is left it changes nothing and still succeeds (BJ-08, fixed). A link that is neither held nor
+  the chain's next is refused as before. Keep `reveal_blocks` well above 12 all the same: it is
+  the dealer's whole margin for a slow node or a full block.
 - **A table needs a live dealer.** A dealer that is down pays every open hand as a player's win.
   Run one dealer, watch it, and pause the table before maintenance.
 - **Views are optional.** Clients read the program's storage through the node's storage route,
@@ -370,21 +407,26 @@ Before a table takes bets on any chain people use:
 6. **The page.** The 18+ self-attest is in place, the note "FANG has no value and can't be bought;
    no prizes." is visible, and the rules on the page match the limits on the chain. A bet's two
    steps have been tried on the wallets players use, a reload between them included, and
-   `seed_blocks` leaves a slow passkey prompt plenty of time.
+   `seed_blocks` leaves a slow passkey prompt plenty of time. The wallet is built with witnesses
+   (`NEXT_PUBLIC_*_WITNESSES`), nodes of the chain that the house doesn't run, so a seed's
+   reveal goes through more than one node: the reveal's review names how many, and with none it
+   says the one node decides.
 7. **A rehearsal.** A full day on a local or test chain at the real limits: hands from several
    wallets, a dealer restart, a deliberate stall, a bet whose seed is held back, a pause, a
    `defund`. Every hand verified.
 8. **The way out.** The steps to stop are written down and tried: `pause(true)`, let open hands
    settle or time out, players withdraw their table balances (never refused), then `defund`.
 9. **The X bot stays in dry run** until it has an X client behind its interface, a review of that
-   client, and a decision on the trust it asks of players (section 2).
+   client, and the player's signature on each relayed bet (section 2): that signature is
+   required before the bot goes live, and isn't built. Until then relayed play is trusted and
+   small-stakes, and is offered in those words.
 
 ## 11. Tests
 
 | What | Command |
 |---|---|
 | Rules against an independent reference, BLAKE3, vectors | `cargo test --release --locked --manifest-path node/vm/Cargo.toml --test blackjack_rules` |
-| The program: every transition, abort, cap, timeout, the two-transaction bet (a wrong, foreign, second or late seed, the forfeit, a front-runner who can't steer a hand), the invariant, fuel | `cargo test --release --locked --manifest-path node/vm/Cargo.toml --test blackjack -- --nocapture` |
+| The program: every transition, abort, cap, timeout, the two-transaction bet (a wrong, foreign, second or late seed, the forfeit, a front-runner who can't steer a hand), a reveal that passes over links already held, the invariant, fuel | `cargo test --release --locked --manifest-path node/vm/Cargo.toml --test blackjack -- --nocapture` |
 | The committed module rebuilds byte for byte | `node/vm/guests/build.sh --check` |
 | The TypeScript rules and codec against the vectors | `npm test -w @blockula/blackjack` |
 | The table on a real local chain through the SDK | `BLOCKULA_RPC=http://127.0.0.1:38100 npm run test:live -w @blockula/blackjack` |

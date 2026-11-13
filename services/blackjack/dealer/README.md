@@ -23,20 +23,20 @@ FANG has no value. This is a game.
 
 ```bash
 # 1. Make the dealer's key and the store's secret (both mode 0600), and print the address.
-npx tsx services/blackjack/dealer/src/cli.ts init --dir ~/.blockula/blackjack-dealer --rpc http://127.0.0.1:7070
+npx tsx services/blackjack/dealer/src/cli.ts init --dir ~/.blockula/blackjack-dealer --rpc http://127.0.0.1:18080
 
 # 2. The table's owner names that address as the dealer: when the table is created
 #    (`createTable(owner, wasm, iface, dealerAddress)`), or later with `set_dealer`.
 #    Send the address some FANG.
 
 # 3. See what it would do, without sending anything.
-npx tsx services/blackjack/dealer/src/cli.ts run --dry-run --rpc http://127.0.0.1:7070 --table boo1…
+npx tsx services/blackjack/dealer/src/cli.ts run --dry-run --rpc http://127.0.0.1:18080 --table boo1…
 
 # 4. Run it.
-npx tsx services/blackjack/dealer/src/cli.ts run --rpc http://127.0.0.1:7070 --table boo1…
+npx tsx services/blackjack/dealer/src/cli.ts run --rpc http://127.0.0.1:18080 --table boo1…
 
 # At any time:
-npx tsx services/blackjack/dealer/src/cli.ts status --rpc http://127.0.0.1:7070 --table boo1…
+npx tsx services/blackjack/dealer/src/cli.ts status --rpc http://127.0.0.1:18080 --table boo1…
 ```
 
 After `npm run build -w @blockula/blackjack-dealer` the same commands are `node services/blackjack/dealer/dist/cli.js …` (the package's bin, `blackjack-dealer`).
@@ -146,7 +146,7 @@ One JSON object a line on standard output: `time`, `level`, `action`, and what i
 | `would_commit`, `would_reveal`, `would_timeout` | A dry run's plan. |
 | `…_unconfirmed` | The call was submitted and its fate isn't known yet. It is followed by its id, not sent again. |
 | `…_lost` | That transaction never reached the node, or can't run any more: the call is planned again from the chain. |
-| `…_refused` | The program refused it. With `moved: true` the table had moved on (someone's call got there first: aborts 54, 57, 58, 59, 60, 61), which is harmless. |
+| `…_refused` | The program refused it. With `moved: true` the table had moved on (someone's call got there first: aborts 54, 57, 58, 59, 60, 61), which is harmless. A reveal that someone got ahead of with some of its links isn't refused: the program passes over the links the hand already holds and deals the rest. |
 | `…_not_sent` | Nothing was submitted (the node refused it, or couldn't be reached). Tried again after a short wait. |
 | `…_out_of_fuel` | A call ran out of the fuel it reserved; it is sent again at once with the chain's maximum. |
 | `timeout` with `turn: "seed"`, `outcome: "no_seed"` | A bet's seed never came and the daemon ended the hand at the seed's deadline. This is the player's doing, not a fault: nothing to fix. Many of them from many accounts is someone holding seats; each costs them a stake. |
@@ -162,7 +162,7 @@ One JSON object a line on standard output: `time`, `level`, `action`, and what i
 ## How it stays safe to restart
 
 - **The chain is the state.** Each look reads the house, the open hands and each hand's record, and plans from those. Nothing in memory is needed after a restart.
-- **Every call can be repeated.** The program takes a link only as its chain's next (abort 58), a batch only where the last one ended (61), and a timeout only past the deadline (60).
+- **Every call can be repeated.** The program takes a link only as its chain's next (abort 58; a link the hand already holds is passed over), a batch only where the last one ended (61), and a timeout only past the deadline (60).
 - **A transaction of unknown fate is followed by its id** until it is final, failed or expired. Only one the node has never heard of is planned again.
 - **A hand waiting for its seed is left alone.** The daemon doesn't touch its store for it and reveals nothing, before or after a restart. When the seed lands, the next look deals the hand.
 - **A timeout is only ever sent for a hand that waits for its player** (for the seed, or for a move), and it is valid for half of `reveal_blocks` at most, so a copy that lands late can't find the hand in the dealer's phase with a deadline already behind it. One that meets a seed that arrived just in time is refused (abort 60), pays nobody, and the hand is dealt.

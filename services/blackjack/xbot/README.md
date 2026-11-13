@@ -146,6 +146,8 @@ So a relayer that works with the dealer could choose the timing of a player's be
 
 Relayed play is for small amounts of FANG with a house the player trusts, which is why the grant has a low limit per bet and per day. A player who wants the full guarantee bets from their own account on the table page. Say so wherever the bot is offered.
 
+That is the decision for now: relayed play and this bot stay trusted and small-stakes. Before the bot goes live, each relayed bet must carry the player's own signature, so the relayer can't place a bet, choose its moment or make up its post id by itself. That isn't built (see the list below), and the bot stays in dry run until it is.
+
 ## Tests
 
 ```sh
@@ -167,6 +169,7 @@ BLOCKULA_RPC=http://127.0.0.1:38500 npm run test:live -w @blockula/blackjack-xbo
 
 None of this is built. Each item needs its own review.
 
+- [ ] **The player's signature on each relayed bet.** Required before the bot goes live ([docs/BLACKJACK_REVIEW.md](../../../docs/BLACKJACK_REVIEW.md), BJ-03 and BJ-09): the program takes a relayed bet only with a signature by the player over that bet (the table, the amount, the post id, an expiry), so a relayer can't invent or re-time one. It needs a change to the program and a way for a player to sign, and its own review.
 - [ ] An X client behind interfaces the bot already has seams for: a source of posts (mentions, with ids, authors and reply targets as X reports them, never parsed from text) and a `ReplySink` that posts and returns the real post id. It lives outside this package's dry-run build, and `test/no-x.ts` keeps guarding this one.
 - [ ] Posting exactly once: record a reply as "about to post" before posting and reconcile after a crash (a reply that was posted but not recorded must not be posted twice). Today a rewritten reply just replaces a folder.
 - [ ] The real link check (`verifyXLink`) as the injected verifier, with its failure modes handled (X unreachable, rate limits), and a decision on how long a link may be trusted.
