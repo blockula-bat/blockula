@@ -31,7 +31,7 @@ use blockula_vm::meter::SCHEDULE_V0;
 use blockula_vm::testing::{MemHost, addr};
 use blockula_vm::validate::validate;
 
-const GUESTS: &[&str] = &["counter", "token", "escrow", "router", "dice"];
+const GUESTS: &[&str] = &["counter", "token", "escrow", "router", "dice", "blackjack"];
 
 fn method(name: &str, kind: MethodKind, payable: bool, args: &[(&str, Type)], returns: Option<Type>) -> Method {
     let args = args.iter().map(|(name, ty)| Arg { name: name.to_string(), ty: ty.clone() }).collect();
@@ -88,6 +88,72 @@ fn guests() -> Vec<(&'static str, Interface)> {
                 ],
             },
         ),
+        // Blackjack (docs/BLACKJACK.md): protocol v2's host functions only. Its inputs are Borsh
+        // for these types (a `vec` carries its `u32` count), so a wallet builds every call from
+        // the interface alone; its views return `bytes` (a `u32` length, then a fixed layout the
+        // crate's doc gives). `reveal` and `timeout` return phase ‖ outcome, read as a `u16`.
+        ("blackjack", {
+            use Type::{Bool, Fang, Hash32, U16};
+            let links = |max| Type::Vec { of: Box::new(Hash32), max };
+            let bytes = |max| Some(Type::Bytes { max });
+            Interface {
+                methods: vec![
+                    method("approve_relayer", Call, false, &[("relayer", Address), ("on", Bool)], None),
+                    method("bet", Call, true, &[("client_seed", Hash32)], Some(U64)),
+                    method("commit_batch", Call, false, &[("first", U64), ("commitments", links(64))], None),
+                    method("commitment", View, false, &[("index", U64)], Some(Hash32)),
+                    method("defund", Call, false, &[("amount", Fang)], None),
+                    method("deposit", Call, true, &[], None),
+                    method("fund", Call, true, &[], None),
+                    method("game", View, false, &[("game", U64)], bytes(159)),
+                    method("hit", Call, false, &[("game", U64)], None),
+                    method("house", View, false, &[], bytes(130)),
+                    method("init", Init, false, &[("dealer", Address)], None),
+                    method(
+                        "limits",
+                        View,
+                        false,
+                        &[],
+                        bytes(96),
+                    ),
+                    method("open_games", View, false, &[], Some(Type::Vec { of: Box::new(U64), max: 32 })),
+                    method("pause", Call, false, &[("on", Bool)], None),
+                    method("player", View, false, &[("account", Address)], bytes(203)),
+                    method("relay_bet", Call, false, &[("player", Address), ("amount", Fang), ("post_id", U64)], Some(U64)),
+                    method("relay_hit", Call, false, &[("game", U64), ("post_id", U64)], None),
+                    method("relay_stand", Call, false, &[("game", U64), ("post_id", U64)], None),
+                    method("relay_withdraw", Call, false, &[("player", Address), ("post_id", U64)], None),
+                    method("reveal", Call, false, &[("game", U64), ("links", links(12))], Some(U16)),
+                    method("revoke", Call, false, &[], None),
+                    method("set_dealer", Call, false, &[("dealer", Address)], None),
+                    method(
+                        "set_limits",
+                        Call,
+                        false,
+                        &[
+                            ("min_bet", Fang),
+                            ("max_bet", Fang),
+                            ("daily_cap", Fang),
+                            ("day_blocks", U64),
+                            ("max_open_games", U64),
+                            ("bankroll_divisor", U64),
+                            ("max_exposure", Fang),
+                            ("reveal_blocks", U64),
+                            ("idle_blocks", U64),
+                            ("deposit_cap", Fang),
+                            ("relay_max_bet", Fang),
+                            ("grant_max_blocks", U64),
+                        ],
+                        None,
+                    ),
+                    method("set_relayer", Call, false, &[("relayer", Address), ("max_bet", Fang), ("daily_cap", Fang), ("expires_at", U64)], None),
+                    method("skip_commits", Call, false, &[("count", U32)], None),
+                    method("stand", Call, false, &[("game", U64)], None),
+                    method("timeout", Call, false, &[("game", U64)], Some(U16)),
+                    method("withdraw", Call, false, &[("amount", Fang)], None),
+                ],
+            }
+        }),
     ]
 }
 
