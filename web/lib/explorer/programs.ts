@@ -162,7 +162,7 @@ export const PROGRAMS: NativeProgram[] = [
       },
     ],
     elsewhere:
-      "Keys join an account only with their own consent, a grant code their holder makes for it, so adding and revoking keys has its own guided flow (grant codes, budgets, expiry) on Devices & agents. Multisig accounts are set up and approved with the CLI (`blockula multisig create`, `propose`, `approve`), which decodes each action before an approval binds it. Passkey owners can't approve in the wallet yet, and the CLI signs with a key file, so a multisig whose owners are passkeys can't approve anything for now.",
+      "Keys join an account only with their own consent, a grant code their holder makes for it, so adding and revoking keys has its own guided flow (grant codes, budgets, expiry) on Devices & agents. Shared accounts (multisig) have their own pages in the wallet: Shared accounts makes one, proposes its actions and approves them with a passkey, each one decoded and described from the action before an approval binds it. The CLI does the same with a key file (`blockula multisig create`, `propose`, `approve`).",
   },
   {
     kind: "native",

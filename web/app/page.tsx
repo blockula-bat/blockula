@@ -12,6 +12,7 @@ import { BalanceBreakdown, NameExpiryBanner, OnePasskeyBanner } from "@/componen
 import { Landing } from "@/components/Landing";
 import { ProjectSite } from "@/components/site/ProjectSite";
 import { Tutorial, useTutorial } from "@/components/Tutorial";
+import { SharedBanner } from "@/components/shared";
 import { Copy, ExplorerLink, Spinner } from "@/components/ui";
 import { explorer, SITE } from "@/lib/config";
 import { fangParts, shortAddr } from "@/lib/format";
@@ -97,6 +98,7 @@ function Home() {
           <b>Your recovery kit isn&apos;t active yet.</b> <Link href="/devices#recovery">Activate it</Link> once you have a little FANG for the fee.
         </div>
       )}
+      <SharedBanner />
       <OnePasskeyBanner account={account} />
       <NameExpiryBanner account={account} />
 
