@@ -690,7 +690,8 @@ fn a_hand_from_bet_to_settlement() {
 #[test]
 fn every_outcome_pays_what_it_should() {
     let stake = 3 * FANG + 1;
-    let cases: [(&str, Outcome, fn(&Hand) -> bool, fn(&Hand) -> bool); 9] = [
+    type Pick = fn(&Hand) -> bool;
+    let cases: [(&str, Outcome, Pick, Pick); 9] = [
         ("a natural against a low card: paid at once", Outcome::Blackjack, never, |h| h.n_dealer == 1),
         ("a natural the hole card doesn't match", Outcome::Blackjack, never, |h| h.n_dealer == 2),
         ("two naturals", Outcome::Push, never, |h| h.n_player == 2 && bj_core::natural(h.player_cards())),

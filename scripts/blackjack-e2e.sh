@@ -24,8 +24,8 @@
 #   8. ends with no open hand, the whole bankroll back with the owner, and all four validators
 #      agreeing on a recent block.
 #
-#   scripts/blackjack-e2e.sh                 # 1,000 hands, about 25 minutes
-#   HANDS=60 scripts/blackjack-e2e.sh        # a quick run, about 5 minutes
+#   scripts/blackjack-e2e.sh                 # 1,000 hands, about 10 minutes
+#   HANDS=60 scripts/blackjack-e2e.sh        # a quick run, about 3 minutes
 #   TEST=live scripts/blackjack-e2e.sh       # the dealer's live test (test/live.ts) on the same chain
 #   KEEP=1 scripts/blackjack-e2e.sh          # keep the directory (it's printed) and every log
 #   HOLD=1 scripts/blackjack-e2e.sh          # only start the chain and wait (Ctrl-C stops it)

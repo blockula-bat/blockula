@@ -354,7 +354,7 @@ fn longest(hard: u8, ace: bool, limit: u8, memo: &mut BTreeMap<(u8, bool), usize
 fn no_hand_is_longer_than_the_bounds_and_hands_that_long_exist() {
     assert_eq!(longest(0, false, 21, &mut BTreeMap::new()), MAX_PLAYER_CARDS);
     assert_eq!(longest(0, false, 17, &mut BTreeMap::new()), MAX_DEALER_CARDS);
-    assert!(MAX_PLAYER_CARDS + MAX_DEALER_CARDS <= CHAIN_LEN);
+    const { assert!(MAX_PLAYER_CARDS + MAX_DEALER_CARDS <= CHAIN_LEN) };
     // The longest player hand, through the state machine: ten aces, a two, eight aces, an ace.
     let mut hand = Hand::new();
     let ranks: Vec<u8> = [vec![0u8; 10], vec![1], vec![0; 9]].concat();
