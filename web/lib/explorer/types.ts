@@ -68,6 +68,8 @@ export interface ChainStatus {
   burned_display: string;
   accounts?: number;
   names?: number;
+  /** Accounts active lately (node/src/pulse.rs); absent on an older node. */
+  pulse?: ChainPulse;
   mempool?: number;
   version?: string;
   git_sha?: string;
@@ -77,6 +79,37 @@ export interface ChainStatus {
   fast_synced_from?: number | null;
   consensus?: string;
   crypto?: Record<string, string>;
+}
+
+/** One window of `/api/status`' `pulse`. */
+export interface PulseWindow {
+  window: "7d" | "1d" | string;
+  /** Its length in blocks. */
+  blocks: number;
+  /** The first height counted: the window's start, or the node's `history_from` when it holds less. */
+  from: number;
+  /** Whether the node holds the window's whole history. */
+  complete: boolean;
+  active: number;
+  /** Accounts active in the window that weren't counted, by why. */
+  excluded: { validators?: number; programs?: number; system?: number; bots?: number };
+}
+
+/**
+ * `/api/status`' `pulse`: accounts whose newest finalized tx (sent, or naming them) is in the window,
+ * not counting validators, programs, system accounts or the accounts the node excludes as bots.
+ */
+export interface ChainPulse {
+  /** `null` on a chain too big to count (see `unavailable`). */
+  active_7d: number | null;
+  active_1d: number | null;
+  /** The height it was counted at (it's recounted about once a minute). */
+  as_of: number;
+  windows: PulseWindow[];
+  /** The accounts the node excludes as bots (`blockula run --pulse-exclude`). */
+  bots: Label[];
+  bots_unresolved?: string[];
+  unavailable?: string | null;
 }
 
 export interface BlockSummary {
