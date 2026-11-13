@@ -62,16 +62,40 @@ const ROOT: u32 = 8;
 /// The longest input [`blake3`] takes: one chunk.
 pub const MAX_HASH_INPUT: usize = 1024;
 
-#[inline(always)]
-fn g(v: &mut [u32; 16], a: usize, b: usize, c: usize, d: usize, x: u32, y: u32) {
-    v[a] = v[a].wrapping_add(v[b]).wrapping_add(x);
-    v[d] = (v[d] ^ v[a]).rotate_right(16);
-    v[c] = v[c].wrapping_add(v[d]);
-    v[b] = (v[b] ^ v[c]).rotate_right(12);
-    v[a] = v[a].wrapping_add(v[b]).wrapping_add(y);
-    v[d] = (v[d] ^ v[a]).rotate_right(8);
-    v[c] = v[c].wrapping_add(v[d]);
-    v[b] = (v[b] ^ v[c]).rotate_right(7);
+/// Which message word each round's sixteen inputs are: row `r` is the permutation applied `r`
+/// times. A table, so a round reads its words in place instead of shuffling the block.
+const SCHEDULE: [[u8; 16]; 7] = {
+    let mut rows = [[0u8; 16]; 7];
+    let mut i = 0;
+    while i < 16 {
+        rows[0][i] = i as u8;
+        i += 1;
+    }
+    let mut r = 1;
+    while r < 7 {
+        let mut j = 0;
+        while j < 16 {
+            rows[r][j] = rows[r - 1][PERMUTATION[j] as usize];
+            j += 1;
+        }
+        r += 1;
+    }
+    rows
+};
+
+/// The quarter-round, on four of the state's words by name: the sixteen words are locals, never
+/// an array in memory (a memory load costs the program several times a local's read).
+macro_rules! g {
+    ($a:ident, $b:ident, $c:ident, $d:ident, $x:expr, $y:expr) => {
+        $a = $a.wrapping_add($b).wrapping_add($x);
+        $d = ($d ^ $a).rotate_right(16);
+        $c = $c.wrapping_add($d);
+        $b = ($b ^ $c).rotate_right(12);
+        $a = $a.wrapping_add($b).wrapping_add($y);
+        $d = ($d ^ $a).rotate_right(8);
+        $c = $c.wrapping_add($d);
+        $b = ($b ^ $c).rotate_right(7);
+    };
 }
 
 /// BLAKE3's compression function for a block of the one chunk this module hashes (its counter is
@@ -83,36 +107,25 @@ fn compress(cv: &[u32; 8], block: &[u8; 64], len: u32, flags: u32) -> [u32; 8] {
         m[i] = u32::from_le_bytes([block[4 * i], block[4 * i + 1], block[4 * i + 2], block[4 * i + 3]]);
         i += 1;
     }
-    let mut v = [cv[0], cv[1], cv[2], cv[3], cv[4], cv[5], cv[6], cv[7], IV[0], IV[1], IV[2], IV[3], 0, 0, len, flags];
+    let [mut v0, mut v1, mut v2, mut v3, mut v4, mut v5, mut v6, mut v7] = *cv;
+    let [mut v8, mut v9, mut v10, mut v11] = [IV[0], IV[1], IV[2], IV[3]];
+    let [mut v12, mut v13, mut v14, mut v15] = [0u32, 0, len, flags];
     let mut round = 0;
-    loop {
-        g(&mut v, 0, 4, 8, 12, m[0], m[1]);
-        g(&mut v, 1, 5, 9, 13, m[2], m[3]);
-        g(&mut v, 2, 6, 10, 14, m[4], m[5]);
-        g(&mut v, 3, 7, 11, 15, m[6], m[7]);
-        g(&mut v, 0, 5, 10, 15, m[8], m[9]);
-        g(&mut v, 1, 6, 11, 12, m[10], m[11]);
-        g(&mut v, 2, 7, 8, 13, m[12], m[13]);
-        g(&mut v, 3, 4, 9, 14, m[14], m[15]);
+    while round < 7 {
+        let s = &SCHEDULE[round];
+        // `& 15`: every entry is below 16, and the mask lets the compiler see it.
+        let w = |i: usize| m[(s[i] & 15) as usize];
+        g!(v0, v4, v8, v12, w(0), w(1));
+        g!(v1, v5, v9, v13, w(2), w(3));
+        g!(v2, v6, v10, v14, w(4), w(5));
+        g!(v3, v7, v11, v15, w(6), w(7));
+        g!(v0, v5, v10, v15, w(8), w(9));
+        g!(v1, v6, v11, v12, w(10), w(11));
+        g!(v2, v7, v8, v13, w(12), w(13));
+        g!(v3, v4, v9, v14, w(14), w(15));
         round += 1;
-        if round == 7 {
-            break;
-        }
-        let mut next = [0u32; 16];
-        let mut j = 0;
-        while j < 16 {
-            next[j] = m[PERMUTATION[j] as usize];
-            j += 1;
-        }
-        m = next;
     }
-    let mut out = [0u32; 8];
-    let mut k = 0;
-    while k < 8 {
-        out[k] = v[k] ^ v[k + 8];
-        k += 1;
-    }
-    out
+    [v0 ^ v8, v1 ^ v9, v2 ^ v10, v3 ^ v11, v4 ^ v12, v5 ^ v13, v6 ^ v14, v7 ^ v15]
 }
 
 /// The BLAKE3 hash of `data`, which must be at most [`MAX_HASH_INPUT`] bytes (one chunk). Panics
@@ -220,10 +233,12 @@ pub enum Outcome {
     Lose = 4,
     /// The player went over 21.
     Bust = 5,
-    /// The dealer missed a reveal after the deal: the player is paid as a win, 1:1.
+    /// The dealer missed a reveal once the player's cards ruled a natural out: the player is paid
+    /// as a win, 1:1, the most that hand could still have paid.
     Forfeit = 6,
-    /// The dealer never dealt: the player is paid 3:2, the most the hand could still have paid,
-    /// so the dealer never gains by holding back a deal it has seen.
+    /// The dealer missed a reveal while a natural was still possible (the deal) or held (its hole
+    /// card against one): the player is paid 3:2. Either way a forfeit pays the most the hand
+    /// could have, so the dealer never gains by holding back a card it has seen.
     ForfeitDeal = 7,
 }
 
@@ -423,6 +438,12 @@ impl Hand {
             Phase::Player | Phase::Done => return None,
         };
         Some(step)
+    }
+
+    /// How the hand ends if the dealer misses its deadline now ([`Outcome::Forfeit`],
+    /// [`Outcome::ForfeitDeal`]): the most the player could still have been paid.
+    pub fn forfeit(&self) -> Outcome {
+        if self.phase == Phase::Deal || natural(self.player_cards()) { Outcome::ForfeitDeal } else { Outcome::Forfeit }
     }
 
     fn push_player(&mut self, card: u8) {

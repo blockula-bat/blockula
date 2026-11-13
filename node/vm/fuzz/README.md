@@ -16,7 +16,7 @@ docs/PROGRAMS-V0.md §10.4):
   seeds are the guests (raw) and `smith-*` (generated modules that validate).
 - **`program_exec`**: the executor, host and overlay never panic, corrupt
   memory or report a node fault (`MemHost` is a sound view, so a `NodeFault`
-  is the executor's bug), however a batch of calls to the five guests is
+  is the executor's bug), however a batch of calls to the six guests is
   shaped: callees, methods, inputs, values, the method kinds and payability
   their interfaces declare, the kind each call runs as and stale version
   digests are all fuzzer-chosen, and so are the block's height and the reveals

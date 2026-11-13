@@ -11,6 +11,14 @@ name = "bj-core"
 version = "0.0.0"
 
 [[package]]
+name = "blackjack"
+version = "0.0.0"
+dependencies = [
+ "abi",
+ "bj-core",
+]
+
+[[package]]
 name = "counter"
 version = "0.0.0"
 dependencies = [

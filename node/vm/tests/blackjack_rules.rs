@@ -423,6 +423,17 @@ fn naturals_and_the_dealers_hole_card() {
     let (mut hand, _) = deal(&[9, 0, 8]);
     assert!(hand.stand());
     assert_eq!(hand.deal(5), Some(Step::Settled(Outcome::Win)), "19 against a soft 17");
+    // A missed deadline pays the most the hand could still have paid: 3:2 before the deal is
+    // done or against a natural, 1:1 after.
+    assert_eq!(Hand::new().forfeit(), Outcome::ForfeitDeal);
+    let (hand, _) = deal(&[9, 0]);
+    assert_eq!(hand.forfeit(), Outcome::ForfeitDeal);
+    let (hand, _) = deal(&[0, 9, 12]);
+    assert_eq!(hand.forfeit(), Outcome::ForfeitDeal, "a natural waiting on the hole card");
+    let (mut hand, _) = deal(&[4, 9, 5]);
+    assert_eq!(hand.forfeit(), Outcome::Forfeit);
+    assert!(hand.hit());
+    assert_eq!(hand.forfeit(), Outcome::Forfeit);
     // Nothing moves out of turn.
     let (mut hand, _) = deal(&[9, 0]);
     assert!(!hand.hit() && !hand.stand());

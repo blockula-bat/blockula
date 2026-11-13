@@ -290,14 +290,16 @@ fn arbitrary_interface(u: &mut Unstructured) -> arbitrary::Result<Interface> {
     Ok(Interface { methods })
 }
 
-/// The hand-written guests (S2, and `dice`, which calls protocol v3's `blake3_v1`, `epoch_v1` and
-/// `beacon_v1`), deployed for every run so the executor has real code to run.
+/// The hand-written guests (S2; `dice`, which calls protocol v3's `blake3_v1`, `epoch_v1` and
+/// `beacon_v1`; and `blackjack`, the largest, with its own BLAKE3 compiled in), deployed for every
+/// run so the executor has real code to run. New guests go last: a seed names a guest by index.
 const GUESTS: &[(&str, &[u8])] = &[
     ("counter", include_bytes!("../../tests/programs/counter.wasm")),
     ("token", include_bytes!("../../tests/programs/token.wasm")),
     ("escrow", include_bytes!("../../tests/programs/escrow.wasm")),
     ("router", include_bytes!("../../tests/programs/router.wasm")),
     ("dice", include_bytes!("../../tests/programs/dice.wasm")),
+    ("blackjack", include_bytes!("../../tests/programs/blackjack.wasm")),
 ];
 
 /// The guests' interfaces, as `UploadCode` carries them beside their code.
@@ -308,6 +310,7 @@ const GUEST_INTERFACES: &[(&str, &[u8])] = &[
     ("escrow", include_bytes!("../../tests/programs/escrow.iface")),
     ("router", include_bytes!("../../tests/programs/router.iface")),
     ("dice", include_bytes!("../../tests/programs/dice.iface")),
+    ("blackjack", include_bytes!("../../tests/programs/blackjack.iface")),
 ];
 
 /// Method names the guests export (`bk_<method>`), plus one they don't, so the "no such export"
@@ -315,6 +318,11 @@ const GUEST_INTERFACES: &[(&str, &[u8])] = &[
 const METHODS: &[&str] = &[
     "get", "increment", "transfer", "balance_of", "total_supply", "init", "open", "release",
     "refund", "send", "try_send", "mint", "nope", "fund", "roll", "settle",
+    // blackjack's (new names go last: a seed names a method by index).
+    "bet", "hit", "stand", "reveal", "timeout", "commit_batch", "deposit", "withdraw", "set_relayer",
+    "relay_bet", "relay_hit", "relay_stand", "relay_withdraw", "revoke", "set_limits", "pause",
+    "defund", "set_dealer", "approve_relayer", "skip_commits", "game", "player", "house", "limits",
+    "open_games", "commitment",
 ];
 
 #[derive(Arbitrary, Debug)]
@@ -508,7 +516,7 @@ mod tests {
     #[test]
     fn interface_codec_accepts_its_seeds() {
         let seeds = seeds("interface_codec");
-        assert_eq!(seeds.len(), 6);
+        assert_eq!(seeds.len(), 7);
         for seed in &seeds {
             interface::decode(seed).expect("every seed is an interface");
             interface_codec(seed);
