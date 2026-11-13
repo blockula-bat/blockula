@@ -25,6 +25,7 @@ import {
   maxBetNow,
   newSeed,
   noteBetTx,
+  noteRevealTx,
   parseAmount,
   payoutWords,
   readStore,
@@ -241,6 +242,19 @@ test("the seed of a bet is found again by the hash the bet carried, and only by 
   // Filing again (the page found the hand on a reload) keeps what was known.
   bindBet(store, key, seed, { game: 7n, seedHash: hash });
   assert.equal(storedHand(store, key, 7n, seed).commit, "d4".repeat(32));
+  // The seed's reveal is noted as the hand's newest reveal (the page warns while it hasn't landed), a second one replaces it,
+  // and both stay in the hand's list. Nothing is noted for a hand that isn't kept, or an id that isn't one.
+  noteRevealTx(store, key, 7n, "f6".repeat(32));
+  noteRevealTx(store, key, 7n, "a7".repeat(32));
+  noteRevealTx(store, key, 7n, "not an id");
+  noteRevealTx(store, key, 8n, "b8".repeat(32));
+  assert.equal(storedHand(store, key, 7n, seed).revealTx, "a7".repeat(32));
+  assert.deepEqual(storedHand(store, key, 7n, seed).txs, [tx, "e5".repeat(32), "f6".repeat(32), "a7".repeat(32)]);
+  assert.equal(readStore(store, key).hands["8"], undefined);
+  assert.match(COPY.seed.unlanded, /isn't in a block .* the bet goes to the house/);
+  assert.match(COPY.seed.sentMany(2), /Your node and 2 other nodes .* its fee is paid once/);
+  assert.match(COPY.seed.sentMany(1), /1 other node of/);
+  assert.match(COPY.seed.unlandedMany(1), /1 other node\./);
   assert.equal(readStore(store, key).pending.length, 1, "the other seed still waits for its bet");
 });
 

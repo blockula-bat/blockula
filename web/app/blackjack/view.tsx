@@ -41,6 +41,7 @@ import {
   maxBetNow,
   newSeed,
   noteBetTx,
+  noteRevealTx,
   parseAmount,
   payoutWords,
   rememberSeed,
@@ -55,7 +56,7 @@ import {
 import { COPY, NOTE, rulesText } from "@/lib/blackjack-copy";
 import { BLACKJACK_TABLE } from "@/lib/config";
 import { inertText } from "@/lib/explorer/inert";
-import { nodeGet } from "@/lib/explorer/node";
+import { OTHER_NODES, nodeGet } from "@/lib/explorer/node";
 import { to } from "@/lib/explorer/routes";
 import { useWallet } from "@/lib/wallet";
 
@@ -357,8 +358,14 @@ function revealRequest(game: bigint, seed: string, key: string, touch: () => voi
           </>
         ),
       },
+      {
+        k: COPY.seed.sentLabel,
+        v: <span className={OTHER_NODES.length ? "small" : "warn small"} data-testid="bj-review-nodes">{OTHER_NODES.length ? COPY.seed.sentMany(OTHER_NODES.length) : COPY.seed.sentOne}</span>,
+      },
     ],
-    onSigned: (id) => (addHandTx(storage(), key, game, id), touch()),
+    // The one call a node could profit from keeping to itself: it goes through every node the wallet knows.
+    everyNode: true,
+    onSigned: (id) => (noteRevealTx(storage(), key, game, id), touch()),
     onApplied: () => touch(),
   };
 }
@@ -476,6 +483,15 @@ function OpenHand({ game, me, myName, height, blockMs, adult, signer, kept, stor
           <span className="warn small" data-testid="bj-seed-warn">{COPY.seed.warn}</span>
           {!canSign && <CallerNote signer={signer} />}
         </div>
+      )}
+      {seedStep && !hs.seedLate && kept?.revealTx && !signer.active && (
+        // A reveal was signed here and the hand still has no seed: it isn't in a block.
+        <p className="warn m0" role="alert" data-testid="bj-seed-unlanded">
+          {COPY.seed.unlanded} {OTHER_NODES.length ? COPY.seed.unlandedMany(OTHER_NODES.length) : COPY.seed.unlandedOne} {COPY.seed.unlandedAgain}{" "}
+          <Link href={to.tx(kept.revealTx)} data-testid="bj-seed-unlanded-tx">
+            {COPY.seed.unlandedSee}
+          </Link>
+        </p>
       )}
       {seedStep && !hs.seedLate && !kept && (
         <p className="warn m0" role="alert" data-testid="bj-seed-missing">

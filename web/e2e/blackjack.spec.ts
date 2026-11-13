@@ -164,6 +164,8 @@ test.describe("the blackjack table", () => {
     expect(table.openHand(me)).toMatchObject({ phase: Phase.Seed, clientSeed: null, seedHash: hash });
     await expect(review.getByTestId("bj-review-seed")).toHaveText(seed);
     await expect(review.getByTestId("bj-review-input")).toHaveText(call.revealSeed(0n, seed).input);
+    // The reveal says where it will be sent. This build knows one node only, and says what that means.
+    await expect(review.getByTestId("bj-review-nodes")).toHaveText("Your node only. This wallet knows no other node of this chain, so this one node decides whether your seed reaches the chain in time.");
     await expect(review.getByTestId("bj-review-value")).toContainText("0");
     await expect(review.getByTestId("bj-review-storage")).toContainText("this call stores nothing new");
     await expect(review.getByTestId("bj-review-digest")).toHaveText(table.digest);
@@ -340,6 +342,59 @@ test.describe("the blackjack table", () => {
     await hand.getByTestId("bj-check-open").click();
     await expect(hand.getByTestId("bj-verdict")).toHaveText(VERIFIED);
     expect((await kept(page))!.hands["0"]).toMatchObject({ seed, seedHash: seedHash(me, seed), commit: table.chains.get(0n)![0] });
+    await clean(page, errors);
+  });
+
+  test("a seed's reveal that doesn't land: the page warns while the hand still waits for its seed, the same transaction is sent again, and the warning goes once it's in a block", async ({ page, node }) => {
+    test.setTimeout(120_000);
+    const { account: me } = await createWallet(page);
+    const table = addTable(node);
+    table.script = PLAYERS_TURN;
+    await page.goto(`/blackjack?table=${TABLE}`);
+    await page.getByTestId("bj-bet-form").getByRole("button", { name: "Unlock" }).click();
+    await page.getByTestId("bj-gate").getByRole("checkbox").check();
+    const seed = await placeBet(page, table, "2");
+    const hand = page.getByTestId("bj-open-hand");
+    // Nothing was signed to reveal the seed yet: no warning about a reveal.
+    await expect(hand.getByTestId("bj-seed-unlanded")).toHaveCount(0);
+
+    // The node takes the reveal and keeps it out of its blocks.
+    const isReveal = (tx: Tx) => tx.action.type === "call_program" && tx.action.calls[0].method === "reveal_seed";
+    node.holdTx = isReveal;
+    await page.getByTestId("bj-sign").click();
+    const sent = page.getByTestId("bj-sent");
+    await expect(sent).toHaveAttribute("data-state", "waiting");
+    // While the page still waits for it, it doesn't warn yet.
+    await expect(hand.getByTestId("bj-seed-unlanded")).toHaveCount(0);
+    await expect(sent).toHaveAttribute("data-state", "unsure", { timeout: 45_000 });
+    await expect(sent.getByTestId("bj-sent-words")).toContainText("Submitted, and not in a block yet.");
+
+    // The hand still waits for its seed, and the page says the reveal hasn't landed and what that costs.
+    expect(table.openHand(me)).toMatchObject({ phase: Phase.Seed, clientSeed: null });
+    const warning = hand.getByTestId("bj-seed-unlanded");
+    await expect(warning).toContainText("Your seed's reveal was signed and sent, but it isn't in a block and the hand still waits for its seed. If it isn't in a block before the deadline, the bet goes to the house.");
+    await expect(warning).toContainText("It went through one node only, the one this wallet uses.");
+    // The same signed transaction went out a second time when the wait ended: one id, so it can run only once.
+    await expect.poll(() => node.held.length).toBe(2);
+    expect(node.held[1]).toEqual(node.held[0]);
+    expect(isReveal(node.held[0])).toBe(true);
+    const stored = (await kept(page))!.hands["0"] as { revealTx?: string; txs: string[] };
+    expect(stored.revealTx).toMatch(/^[0-9a-f]{64}$/);
+    expect(stored.txs.at(-1)).toBe(stored.revealTx);
+    await expect(warning.getByTestId("bj-seed-unlanded-tx")).toHaveAttribute("href", new RegExp(`${stored.revealTx}`));
+    // The reveal can still be made again from here.
+    await expect(hand.getByTestId("bj-reveal")).toBeEnabled();
+    // The warning is the hand's, not the moment's: it is there after a reload too.
+    await page.reload();
+    await expect(page.getByTestId("bj-open-hand").getByTestId("bj-seed-unlanded")).toBeVisible();
+
+    // It reaches a block at last, once: the hand has its seed and the warning is gone.
+    const before = node.submitted.length;
+    expect(node.release()).toEqual([stored.revealTx]);
+    expect(node.submitted).toHaveLength(before + 1);
+    expect(table.openHand(me)).toMatchObject({ phase: Phase.Deal, clientSeed: seed });
+    await expect(page.getByTestId("bj-open-hand").getByTestId("bj-status")).toContainText("Seed revealed. Waiting for the dealer…");
+    await expect(page.getByTestId("bj-open-hand").getByTestId("bj-seed-unlanded")).toHaveCount(0);
     await clean(page, errors);
   });
 

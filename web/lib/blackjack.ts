@@ -253,6 +253,8 @@ export interface StoredHand {
   commit?: string;
   /** The bet's transaction. */
   betTx?: string;
+  /** The newest transaction this page signed to reveal the seed. Until the hand has its seed, it hasn't landed. */
+  revealTx?: string;
   /** Every transaction of the hand this page sent, the bet first. */
   txs: string[];
   /** When the seed was made (ms). */
@@ -289,6 +291,7 @@ function cleanHand(h: unknown): StoredHand | null {
     ...(typeof o.game === "string" && /^\d{1,20}$/.test(o.game) ? { game: o.game } : {}),
     ...(isHash(o.commit) ? { commit: o.commit } : {}),
     ...(isHash(o.betTx) ? { betTx: o.betTx } : {}),
+    ...(isHash(o.revealTx) ? { revealTx: o.revealTx } : {}),
     txs: Array.isArray(o.txs) ? o.txs.filter(isHash).slice(0, 64) : [],
     at: typeof o.at === "number" && Number.isFinite(o.at) ? o.at : 0,
   };
@@ -398,6 +401,16 @@ export function addHandTx(storage: KeyValue | null, key: string, game: bigint, t
   const h = s.hands[game.toString()];
   if (!h || !isHash(txId) || h.txs.includes(txId)) return;
   h.txs.push(txId);
+  writeStore(storage, key, s);
+}
+
+/** Notes the transaction that reveals hand `game`'s seed, as soon as it's signed, beside the hand's others. */
+export function noteRevealTx(storage: KeyValue | null, key: string, game: bigint, txId: string): void {
+  const s = readStore(storage, key);
+  const h = s.hands[game.toString()];
+  if (!h || !isHash(txId)) return;
+  h.revealTx = txId;
+  if (!h.txs.includes(txId)) h.txs.push(txId);
   writeStore(storage, key, s);
 }
 
