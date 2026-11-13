@@ -5,6 +5,7 @@ description = "Blackjack rules for the `blackjack` guest: cards from a hash chai
 # (a dev-dependency by path), and a dependency reads no other workspace's package table.
 edition = "2024"
 version = "0.0.0"
+license = "MIT"
 publish = false
 
 [lib]
