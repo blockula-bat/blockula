@@ -455,6 +455,13 @@ fn upload(dir: &Path, code: &Path, interface: &Path, storage_limit: Option<Strin
     with_signer(dir, signer, async |remote, keys, from, bounds| {
         let stored = |path: String| async move { try_get(&remote.rpc, &path).await.map(|v| v.is_some()) };
         let (code_stored, iface_stored) = (stored(format!("/code/{wasm_hash}")).await?, stored(format!("/interface/{interface_hash}")).await?);
+        // The check above takes every host function this release knows. The chain takes the ones
+        // its protocol version has (code importing a later one is refused, and charged): new code
+        // is checked against the version the next block runs under.
+        if !code_stored {
+            let version = get(&remote.rpc, "/upgrade").await?["protocol_version"].as_u64().and_then(|v| u32::try_from(v).ok()).ok_or_else(|| anyhow!("{}/api/upgrade has no protocol_version", remote.rpc))?;
+            blockula_vm::validate::validate_at(&wasm, version).map_err(|e| anyhow!("this chain runs protocol v{version}, which would refuse this code (upload validation rule {} {:?}: it imports a host function a later protocol version adds): nothing was signed", e.rule.number(), e.rule))?;
+        }
         let deposit = bounds.upload_deposit(&[(wasm.len(), !code_stored), (iface.len(), !iface_stored)]).ok_or_else(|| anyhow!("program state is full: nothing more can be stored at any price"))?;
         println!("deposit   {} bonded for what's new ({}), at today's price; v0 has no way to take a deposit back", fmt_fang(deposit), match (code_stored, iface_stored) {
             (false, false) => "the code and the interface",
