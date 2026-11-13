@@ -530,7 +530,8 @@ try {
     r = rig({}, { table, at: r.at });
     const h = await r.dealer.start();
     assert.deepEqual([h.unused, h.servable, h.missing], [15, 0, [{ from: 1n, to: 15n }]]);
-    assert.equal(h.open[0].hasSecret, false);
+    // (A natural paid at the deal leaves no open hand: one hand in twenty or so.)
+    if (h.open.length) assert.equal(h.open[0].hasSecret, false);
     await r.step();
     const loud = r.logs.find((l) => l.action === "lost_secrets")!;
     assert.equal(loud.level, "error");
@@ -682,6 +683,106 @@ try {
     console.log("✓ a node that doesn't answer is retried; a low balance is warned about");
   }
 
+  // ---- a bet is two transactions: nothing is dealt before the seed, and a seed that never comes ends the hand
+  {
+    const r = rig();
+    await r.step();
+    const reveals = () => sent(r, "reveal").length;
+    const timeouts = () => sent(r, "timeout").length;
+    // The fake's own rules for a seed, as the program's: only the player, only the committed seed, once, in time.
+    const s = seed();
+    const id = r.table.commitBet("boo1alice", s);
+    const g = r.table.games.get(id)!;
+    assert.deepEqual([g.phase, g.clientSeed, g.deadline], [Phase.Seed, null, BigInt(r.table.height) + 25n]);
+    assert.deepEqual(owedLinks(g, chainFromTop(r.store.top(id)!)), [], "nothing is owed before the seed");
+    assert.throws(() => r.table.revealSeed(id, "boo1bob", s), (e) => e === 55);
+    assert.throws(() => r.table.revealSeed(id, "boo1alice", seed()), (e) => e === 71);
+    // Waiting for the seed, before its deadline: the dealer does nothing, tick after tick, and a restart changes nothing.
+    assert.deepEqual(await r.step(), []);
+    r.table.mine(5);
+    assert.deepEqual(await r.step(), []);
+    let again = r.restart();
+    await again.dealer.start();
+    assert.deepEqual(await again.step(), [], "a restarted dealer does nothing for it either");
+    assert.deepEqual([reveals(), timeouts()], [0, 0]);
+    assert.ok(!actions(r).concat(actions(again)).some((a) => /hand_without|lost|refused/.test(a)), "and says nothing alarming about it");
+    // The seed arrives: the next look deals it, exactly the deal's links.
+    r.table.revealSeed(id, "boo1alice", s);
+    assert.throws(() => r.table.revealSeed(id, "boo1alice", s), (e) => e === 70);
+    assert.deepEqual(await again.step(), [`reveal:${id}:${Phase.Deal}:0`]);
+    assert.equal(reveals(), 1);
+    assert.equal(sent(r, "reveal")[0].call.input, call.reveal(id, owedLinks({ ...g, clientSeed: s, phase: Phase.Deal }, chainFromTop(again.store.top(id)!))).input);
+    // A restart with the seed revealed and the deal owed deals it too (here: it's already dealt, so nothing twice).
+    again = again.restart();
+    await again.dealer.start();
+    await playOut(again);
+    assert.equal(verifyHand(again.table.settled.at(-1)!).forfeited, false);
+
+    // A seed that never comes. One block before the deadline: nothing. At it: the timeout, which lands past it.
+    const lost = again.table.commitBet("boo1bob", seed());
+    const gl = again.table.games.get(lost)!;
+    again.table.mine(Number(gl.deadline) - again.table.height - 1);
+    assert.deepEqual(await again.step(), []);
+    again.table.mine(1);
+    const before = timeouts();
+    // A dealer restarted at this very point plans the same call, and only one of them lands.
+    const twin = again.restart();
+    await twin.dealer.start();
+    assert.deepEqual(await twin.step(), [`timeout:seed:${lost}`]);
+    assert.equal(timeouts(), before + 1);
+    const t = sent(r, "timeout").at(-1)!;
+    assert.deepEqual([t.call.input, t.validForBlocks], [call.timeout(lost).input, 10]);
+    const ended = twin.table.settled.at(-1)!;
+    assert.deepEqual([ended.game, ended.outcome, ended.payout, ended.clientSeed, ended.dealt, ended.by], [lost, Outcome.NoSeed, 0n, null, 0, DEALER]);
+    const v = verifyHand(ended);
+    assert.deepEqual([v.unrevealed, v.forfeited, v.cards], [true, false, []]);
+    assert.deepEqual(await twin.step(), [], "once: the hand is gone");
+    const line = twin.logs.find((l) => l.action === "timeout")!;
+    assert.deepEqual([line.outcome, line.turn, line.game], ["no_seed", "seed", lost.toString()]);
+    assert.throws(() => twin.table.revealSeed(lost, "boo1bob", seed()), (e) => e === 54);
+
+    // A seed past its deadline is refused (72) and the dealer's timeout still ends the hand.
+    const s3 = seed();
+    const late = twin.table.commitBet("boo1carol", s3);
+    twin.table.mine(26);
+    assert.throws(() => twin.table.revealSeed(late, "boo1carol", s3), (e) => e === 72);
+    assert.deepEqual(await twin.step(), [`timeout:seed:${late}`]);
+    assert.equal(twin.table.settled.at(-1)!.outcome, Outcome.NoSeed);
+
+    // A stale read: the seed landed in the deadline's own block, but the dealer's node still showed the hand
+    // waiting. Its timeout is refused (60: the dealer now has its own deadline), pays nobody, and the hand is dealt.
+    const s4 = seed();
+    const raced = twin.table.commitBet("boo1dave", s4);
+    const gr = twin.table.games.get(raced)!;
+    twin.table.mine(Number(gr.deadline) - twin.table.height - 1);
+    twin.table.revealSeed(raced, "boo1dave", s4);
+    assert.equal(BigInt(twin.table.height), gr.deadline);
+    const read = twin.table.game.bind(twin.table);
+    twin.table.game = async (id) => (id === raced ? { ...gr } : read(id));
+    assert.deepEqual(await twin.step(), [`timeout:seed:${raced}`]);
+    twin.table.game = read;
+    const refusedLine = twin.logs.filter((l) => l.action === "timeout_refused").at(-1)!;
+    assert.deepEqual([refusedLine.abort, refusedLine.moved], [60, true]);
+    assert.equal(twin.table.games.get(raced)!.phase, Phase.Deal, "the seed got there first: the hand is the dealer's to deal");
+    assert.deepEqual(await twin.step(), [`reveal:${raced}:${Phase.Deal}:0`]);
+    await playOut(twin);
+    const last = twin.table.settled.at(-1)!;
+    assert.deepEqual([last.game, verifyHand(last).forfeited, verifyHand(last).unrevealed], [raced, false, false]);
+
+    // A dry run says what it would do and sends nothing.
+    const dryId = twin.table.commitBet("boo1erin", seed());
+    twin.table.mine(26);
+    const dry = twin.restart({ dryRun: true });
+    const n = dry.table.sends.length;
+    assert.deepEqual(await dry.step(), [`timeout:seed:${dryId}`]);
+    assert.ok(actions(dry).includes("would_timeout"));
+    assert.equal(dry.table.sends.length, n);
+    const live = dry.restart({ dryRun: false });
+    await live.step();
+    assert.equal(live.table.open.length, 0);
+    console.log("✓ a bet waiting for its seed is left alone, dealt once the seed is revealed, and ended by timeout when it never comes");
+  }
+
   // ---- `inspect`: what `status` shows
   {
     const r = rig();
@@ -689,7 +790,12 @@ try {
     const id = r.table.bet("boo1alice", seed());
     const h = await inspect(r.table, r.store, DEALER);
     assert.deepEqual([h.isDealer, h.unused, h.servable, h.missing, h.mismatched, h.stored, h.nextGame, h.nextCommit], [true, 15, 15, [], [], 16, 1n, 16n]);
-    assert.deepEqual(h.open, [{ id, phase: Phase.Deal, deadline: r.table.games.get(id)!.deadline, dealers: true, hasSecret: true }]);
+    assert.deepEqual(h.open, [{ id, phase: Phase.Deal, deadline: r.table.games.get(id)!.deadline, dealers: true, waitsForSeed: false, hasSecret: true }]);
+    const s = seed();
+    const waits = r.table.commitBet("boo1bob", s);
+    const h2 = await inspect(r.table, r.store, DEALER);
+    assert.deepEqual(h2.open[1], { id: waits, phase: Phase.Seed, deadline: r.table.games.get(waits)!.deadline, dealers: false, waitsForSeed: true, hasSecret: true });
+    r.table.revealSeed(waits, "boo1bob", s);
     await playOut(r);
   }
 
