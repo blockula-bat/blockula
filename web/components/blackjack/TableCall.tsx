@@ -35,6 +35,8 @@ export interface CallRequest {
   call: TableCall;
   /** What it does, in the page's words: the review's headline. */
   does: string;
+  /** What to say while it waits for a block ("Placing your bet (step 1 of 2)…"); the page's usual words otherwise. */
+  waiting?: string;
   /** Extra lines for the review (the bet's seed). */
   notes?: { k: string; v: ReactNode }[];
   /** The transaction's id, the moment it's signed (before the node answers). */
@@ -52,7 +54,7 @@ interface Review {
 }
 
 type Sent =
-  | { state: "waiting"; id: string; does: string }
+  | { state: "waiting"; id: string; does: string; words?: string }
   | { state: "applied"; id: string; does: string; summary: string }
   | { state: "failed"; id: string; does: string; words: string; message: string | null }
   | { state: "refused"; id: string; does: string; words: string }
@@ -168,7 +170,7 @@ export function useTableSigner(program: string, onDone: () => void): TableSigner
     req.onSigned?.(id);
     setBusy(null);
     setReview(null);
-    setSent({ state: "waiting", id, does: req.does });
+    setSent({ state: "waiting", id, does: req.does, words: req.waiting });
     try {
       id = await submitTx(signed);
     } catch (e) {
@@ -313,7 +315,7 @@ export function useTableSigner(program: string, onDone: () => void): TableSigner
       {sent && (
         <div className="preview" aria-live="polite" data-testid="bj-sent" data-state={sent.state}>
           <span className="eyebrow">{sent.does}</span>
-          {sent.state === "waiting" && <Spinner>{COPY.sent.waiting}</Spinner>}
+          {sent.state === "waiting" && <Spinner>{sent.words ?? COPY.sent.waiting}</Spinner>}
           {sent.state === "applied" && (
             <p className="m0">
               {COPY.sent.applied} <span className="dim small">{inertText(sent.summary, 200)}</span>
