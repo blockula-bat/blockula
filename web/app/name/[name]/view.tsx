@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouteParam } from "@/lib/route-param";
 import { ActionForm } from "@/components/explorer/ActionForm";
 import { Loading, NotFound, Section, Term, useMe, Who } from "@/components/explorer/kit";
+import { XLinkOf } from "@/components/explorer/XLink";
 import { approxDate } from "@/lib/creators";
 import { blocksToHuman } from "@/lib/format";
 import { useNode } from "@/lib/explorer/node";
@@ -86,6 +87,12 @@ export default function NamePage() {
                 {head != null && r.expires_at > head ? ` (in about ${blocksToHuman(r.expires_at - head, blockMs)})` : ""}
               </>
             )}
+          </span>
+        )}
+        {/* Its owner's linked X handle, if they recorded one (docs/X-LINKING.md): the account's, so it follows the name's owner. */}
+        {st === "active" && r.owner && (
+          <span className="sub" data-testid="name-x">
+            <XLinkOf address={r.owner.address} />
           </span>
         )}
         {/* What it costs and when it lapses (CRE-11): a creator's printed links depend on it. */}
