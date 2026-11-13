@@ -157,7 +157,7 @@ cargo test --release --locked --manifest-path node/Cargo.toml replay::
 
 `v2-programs` (40 blocks) is a third recording, of a two-validator chain born at **protocol v2
 with programs on**. It isn't part of the v1 gate; it holds v2's program rules the same way, in
-`cargo test` (`the_v2_corpus_replays`, CI's node-unit job): every block's state root, every
+the same CI step and in `cargo test` (`the_v2_corpus_replays`): every block's state root, every
 tx's outcome and every program receipt (`Block.programs` in the block log) must come out as
 recorded.
 

@@ -15,7 +15,7 @@
   "license": "MIT",
   "dependencies": {
     "@blockula/blackjack": "0.1.0",
-    "@blockula/sdk": "1.0.8",
+    "@blockula/sdk": "1.0.10",
     "@noble/hashes": "2.4.0"
   },
   "devDependencies": {
