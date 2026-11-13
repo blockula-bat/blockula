@@ -18,16 +18,25 @@
 //! match random::settle(&req, b"dice/roll") {
 //!     Outcome::Settled(value) => pay_out(random::below(&value, 6)),
 //!     Outcome::Pending => abort(NOT_YET, b"not yet"),
-//!     Outcome::Expired | Outcome::TooFewReveals => refund(),
+//!     Outcome::TooFewReveals => refund(),   // no randomness: there was no result
+//!     Outcome::Expired => forfeit(),        // never a refund
 //! }
 //! ```
 //!
 //! **The rules this module keeps, and the ones it leaves to the program:**
-//! - What happens on [`Outcome::Expired`] and [`Outcome::TooFewReveals`] (a refund, a forfeit) is
-//!   the program's rule, and it must be **fixed when the request is made**, never chosen at
-//!   settlement. If only the requester can settle, expiry must forfeit: a refund would let a
-//!   loser win by never settling. If anyone can settle (as the `dice` guest does), a refund is
-//!   fine: whoever gains from the result settles it.
+//! - What happens on [`Outcome::Expired`] and [`Outcome::TooFewReveals`] is the program's rule,
+//!   and it must be **fixed when the request is made**, never chosen at settlement.
+//! - **[`Outcome::Expired`] must never be a refund.** A request whose value was usable and that
+//!   nobody settled while the chain kept it must cost the requester what a loss would: forfeit.
+//!   A refund there is a free option: the requester sees the value, settles when it won and
+//!   waits when it lost. That holds even when anyone may settle, because nobody has a reason to
+//!   settle somebody else's loss unless the program pays for it.
+//! - **So let anyone settle, and pay whoever does**: a small bounty fixed at request time (the
+//!   `dice` guest pays a hundredth of the stake). Then a loss is settled by whoever wants the
+//!   bounty, and a request only expires if nobody at all came in [`KEPT_EPOCHS`] epochs.
+//! - [`Outcome::TooFewReveals`] may refund: the value wasn't randomness, there is no result to
+//!   dodge, and the reveal count is on the chain for everyone. (A refund does give validators
+//!   who withhold a veto: docs/RANDOMNESS.md 5.2.)
 //! - `min_reveals` is the program's, never the caller's: with no reveals the beacon is a hash
 //!   chain anyone can compute ahead.
 //! - Nothing that can change between the request and its settlement may decide what the value is
@@ -45,10 +54,14 @@ use crate::{abort, beacon, blake3, code, epoch, get_u64, put, self_address};
 /// A request names the beacon this many epochs after the one it's made in: the first whose
 /// reveals haven't started (commitments for `e + 2` are made during `e`, revealed during `e + 1`).
 pub const DELAY_EPOCHS: u64 = 2;
-/// A request can be settled until this many epochs after its target, half of the 64 epochs of
-/// values the chain keeps: past it, [`settle`] answers [`Outcome::Expired`], whatever the beacon
-/// was, so a request never waits on a value the chain has dropped.
+/// A request's deadline is this many epochs after its target, half of the [`KEPT_EPOCHS`] the
+/// chain keeps a value for. Through the deadline [`settle`] finds the target's value once it's
+/// derived, on any chain that keeps at least this many; past it the value may be gone.
 pub const SETTLE_EPOCHS: u64 = 32;
+/// How many epochs the chain keeps a beacon value for, the value's own epoch included
+/// (`beacon_v1`'s window, part of that function): a request settles in its target epoch and the
+/// 63 after it, and is [`Outcome::Expired`] from the 64th on.
+pub const KEPT_EPOCHS: u64 = 64;
 /// Longest domain [`settle`] takes, in bytes.
 pub const MAX_DOMAIN: usize = 64;
 /// Where this module keeps the next request id, in the program's own storage (a `u64`, LE). A
@@ -64,7 +77,8 @@ pub struct Request {
     pub id: u64,
     /// The epoch whose beacon settles it: the request's epoch + [`DELAY_EPOCHS`].
     pub target_epoch: u64,
-    /// The last epoch it can be settled in: `target_epoch` + [`SETTLE_EPOCHS`].
+    /// `target_epoch` + [`SETTLE_EPOCHS`]. A missing value means "not derived yet" through this
+    /// epoch and "gone" after it; a value that is still kept settles after it too.
     pub deadline_epoch: u64,
     /// The fewest validator reveals the beacon value must hold to be used.
     pub min_reveals: u32,
@@ -95,14 +109,18 @@ impl Request {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Outcome {
     /// The request's value: BLAKE3(domain ‖ this program's address ‖ request id ‖ beacon value).
-    /// The same on every call from now until the deadline.
+    /// The same on every call for as long as the chain keeps the target's beacon value
+    /// ([`KEPT_EPOCHS`]), before the deadline and after it.
     Settled([u8; 32]),
     /// The target epoch's beacon isn't derived yet: try again later. Change nothing.
     Pending,
-    /// The deadline passed. Final: apply the rule fixed at request time.
+    /// The deadline passed and the chain no longer keeps the target's value, so nobody can tell
+    /// any more what the outcome was, or whether it had enough reveals. Final. **Forfeit, never
+    /// refund** (the module's rules): a refund here pays a requester for waiting out a loss.
     Expired,
     /// The beacon value is there but fewer than `min_reveals` validators revealed for it. Final
-    /// (a derived value never changes): apply the rule fixed at request time.
+    /// while the value is kept (a derived value never changes), then [`Outcome::Expired`]: apply
+    /// the rule fixed at request time.
     TooFewReveals,
 }
 
@@ -124,16 +142,14 @@ pub fn settle(request: &Request, domain: &[u8]) -> Outcome {
     if domain.len() > MAX_DOMAIN {
         abort(code::BAD_INPUT, b"random domain too long");
     }
-    // Checked first: past the deadline nothing settles, even while the chain still keeps the
-    // value, so when a request stops being settleable doesn't depend on who looks.
-    if epoch() > request.deadline_epoch {
-        return Outcome::Expired;
-    }
-    // Within the deadline the chain still keeps the target's value once it's derived (it keeps
-    // 64 epochs), so "none" here means "not yet".
     let Some((value, reveals)) = beacon(request.target_epoch) else {
-        return Outcome::Pending;
+        // No value. Through the deadline the chain can't have dropped it yet (it keeps
+        // `KEPT_EPOCHS`, twice `SETTLE_EPOCHS`), so it isn't derived: "not yet". Past the
+        // deadline it was derived long ago, so it has been dropped.
+        return if epoch() > request.deadline_epoch { Outcome::Expired } else { Outcome::Pending };
     };
+    // A value that's still kept settles the same before the deadline and after it: when a
+    // request stops being settleable depends on the chain's state alone, never on who looks.
     if reveals < request.min_reveals {
         return Outcome::TooFewReveals;
     }

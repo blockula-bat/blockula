@@ -223,15 +223,18 @@ fn the_view_reads_the_beacon_from_derivation_until_it_is_pruned() {
 
 /// The dice on the chain's own beacon. With no validator taking part, the values are the hash
 /// chain: a roll that asks for one reveal is refunded. With the validator's reveals in, a roll
-/// can't settle before its epoch, then settles on that epoch's value; a dice that asks for more
-/// reveals than the chain has validators refunds; and a roll nobody settles is refunded once its
-/// deadline has passed, even though the state still holds its value.
+/// can't settle before its epoch, then settles on that epoch's value and pays its settler the
+/// bounty; a dice that asks for more reveals than the chain has validators refunds; a roll left
+/// past its deadline still settles on its value while the state keeps it; and a roll nobody
+/// settled in those 64 epochs is forfeit to the bank: its player gets nothing back.
 #[test]
-fn the_dice_settles_refunds_and_expires_on_the_chains_beacon() {
+fn the_dice_settles_refunds_and_forfeits_on_the_chains_beacon() {
     let mut r = Rig::new("rand-dice", 1);
     let one = r.dice(ALICE, 1);
     let two = r.dice(ALICE, 2);
-    let bob = r.d.address(BOB);
+    let (bob, carol) = (r.d.address(BOB), r.d.address(CAROL));
+    let (bob_bytes, carol_bytes) = (crypto::address_bytes(&bob).unwrap(), crypto::address_bytes(&carol).unwrap());
+    const BOUNTY: u64 = FANG / 100;
 
     // --- No reveals: the hash-chain fallback. ---
     r.until_epoch(1);
@@ -245,8 +248,8 @@ fn the_dice_settles_refunds_and_expires_on_the_chains_beacon() {
     assert_eq!(fate, Fate::Applied);
     let receipt = receipt.unwrap();
     assert_eq!(receipt.calls[0].return_data.0, [0], "no face");
-    assert_eq!(event(&receipt), ("refunded", &[&le(id)[..], &crypto::address_bytes(&bob).unwrap(), &le(FANG), &[2]].concat()[..]));
-    assert_eq!(r.d.balance(&one), BANK, "the stake went back");
+    assert_eq!(event(&receipt), ("refunded", &[&le(id)[..], &bob_bytes, &le(FANG)].concat()[..]));
+    assert_eq!(r.d.balance(&one), BANK, "the whole stake went back, and no bounty was paid");
 
     // --- The validator takes part from epoch 3: epoch 5's value is the first with its reveal. ---
     r.duties = true;
@@ -276,30 +279,51 @@ fn the_dice_settles_refunds_and_expires_on_the_chains_beacon() {
     let receipt = receipt.unwrap();
     let payout = if rolled == 4 { 6 * FANG } else { 0 };
     assert_eq!(receipt.calls[0].return_data.0, [rolled]);
-    assert_eq!(event(&receipt), ("settled", &[&le(id)[..], &crypto::address_bytes(&bob).unwrap(), &[rolled], &le(payout)].concat()[..]));
-    assert_eq!(r.d.balance(&one), before - payout);
+    assert_eq!(event(&receipt), ("settled", &[&le(id)[..], &bob_bytes, &[rolled], &le(payout), &carol_bytes, &le(BOUNTY)].concat()[..]));
+    assert_eq!(r.d.balance(&one), before - payout - BOUNTY, "carol, who settled it, got the bounty");
     assert!(r.settle(CAROL, &one, id).0.failed().ends_with("aborted with code 34"), "settled once");
     // The same value, one reveal: under the other dice's floor of two, so its roll is refunded.
     let (fate, receipt) = r.settle(CAROL, &two, id2);
     assert_eq!(fate, Fate::Applied);
-    assert_eq!(event(&receipt.unwrap()), ("refunded", &[&le(id2)[..], &crypto::address_bytes(&bob).unwrap(), &le(FANG), &[2]].concat()[..]));
+    assert_eq!(event(&receipt.unwrap()), ("refunded", &[&le(id2)[..], &bob_bytes, &le(FANG)].concat()[..]));
     assert_eq!(r.d.balance(&two), BANK);
 
-    // --- Expiry: a roll left alone past its deadline. ---
-    let (id, target, deadline) = r.roll(BOB, &one, 2, FANG);
+    // --- Two rolls left alone past their deadline. ---
+    let (late, target, deadline) = r.roll(BOB, &one, 2, FANG);
     assert_eq!((target, deadline), (7, 39));
-    let before = r.d.balance(&one);
-    // The deadline's last block: its value is long derived, and it would still settle.
+    let (stale, stale_target, _) = r.roll(BOB, &one, 2, FANG);
+    assert_eq!(stale_target, target);
+    // Past the deadline the value is still in the state, so the first settles on it like any
+    // roll: waiting gave bob nothing, and carol, a stranger, is paid to close it.
     r.until_epoch(deadline + 1);
     assert_eq!(r.epoch(), deadline + 1);
-    let kept = r.value(target).unwrap();
-    assert_eq!(kept.1, 1, "the value is still in the state, with its reveal");
-    let (fate, receipt) = r.settle(CAROL, &one, id);
+    let (value, reveals) = r.value(target).unwrap();
+    assert_eq!(reveals, 1, "the value is still in the state, with its reveal");
+    let rolled = face(&one, late, &value);
+    let (bank, bob_before) = (r.d.balance(&one), r.d.balance(&bob));
+    let (fate, receipt) = r.settle(CAROL, &one, late);
+    assert_eq!(fate, Fate::Applied);
+    let receipt = receipt.unwrap();
+    let payout = if rolled == 2 { 6 * FANG } else { 0 };
+    assert_eq!(receipt.calls[0].return_data.0, [rolled]);
+    assert_eq!(event(&receipt), ("settled", &[&le(late)[..], &bob_bytes, &[rolled], &le(payout), &carol_bytes, &le(BOUNTY)].concat()[..]));
+    assert_eq!(r.d.balance(&one), bank - payout - BOUNTY);
+    assert!(r.d.balance(&bob) - bob_before - payout < FANG / 2, "no refund: at most the roll's deposit");
+    // The value's last epoch is target + 63. From the next, nobody can tell what the second
+    // roll was: forfeit. The stake stays in the bank, less the bounty for closing it.
+    r.until_epoch(target + VALUES_KEPT - 1);
+    assert!(r.value(target).is_some(), "kept through epoch {}", target + VALUES_KEPT - 1);
+    r.until_epoch(target + VALUES_KEPT);
+    assert_eq!(r.value(target), None, "the state has dropped it");
+    let (bank, bob_before) = (r.d.balance(&one), r.d.balance(&bob));
+    let (fate, receipt) = r.settle(CAROL, &one, stale);
     assert_eq!(fate, Fate::Applied);
     let receipt = receipt.unwrap();
     assert_eq!(receipt.calls[0].return_data.0, [0]);
-    assert_eq!(event(&receipt), ("refunded", &[&le(id)[..], &crypto::address_bytes(&bob).unwrap(), &le(FANG), &[1]].concat()[..]));
-    assert_eq!(r.d.balance(&one), before - FANG);
+    assert_eq!(event(&receipt), ("forfeited", &[&le(stale)[..], &bob_bytes, &le(FANG), &carol_bytes, &le(BOUNTY)].concat()[..]));
+    assert_eq!(r.d.balance(&one), bank - BOUNTY, "the stake stayed");
+    assert!(r.d.balance(&bob) - bob_before < FANG / 2, "no refund: at most the roll's deposit");
+    assert!(r.settle(BOB, &one, stale).0.failed().ends_with("aborted with code 34"), "closed once");
     assert_eq!(r.d.stored(&one, b"o"), Some(le(0)), "nothing is owed once every roll is closed");
     assert!(r.d.c.state.staking.pools.values().all(|p| p.jail.is_none()), "the validator revealed every time");
 }

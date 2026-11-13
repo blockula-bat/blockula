@@ -10,6 +10,15 @@ is worth, and what it isn't. For program authors. Programs, never contracts.
 > themselves are experimental and off by default ([PROGRAMS-V0.md](PROGRAMS-V0.md)). The design
 > this follows is [PROGRAMS.md](PROGRAMS.md) 10.3. [Section 8](#8-proposal-fast-per-block-randomness)
 > is a proposal, not something the node does.
+>
+> **v3 is also the audit-fix version.** Protocol v3 was reserved for the fixes an audit of
+> programs asks for (`upgrade::MAINNET_PROGRAMS_ACTIVATION_VERSION`, [PROGRAMS-V0.md](PROGRAMS-V0.md)
+> §1.7), and it now carries the randomness ABI as well. So an audit of programs under v3 has
+> these three host functions, their gate at upload and their fuel prices in its scope
+> ([AUDIT_SCOPE.md](AUDIT_SCOPE.md), "Programs"), and a release that ships v3 ships both or
+> moves one of them to a later version. The node asserts at compile time that the VM's
+> `abi::RANDOMNESS_VERSION` is the preview version, and `abi::FIRST_VERSION` the programs
+> version (`node/src/upgrade.rs`), so the numbers can't drift apart unnoticed.
 
 ## 1. The short version
 
@@ -43,7 +52,8 @@ v3.
   block after;
 - **after it's pruned, forever.** The state keeps the last 64 epochs of values
   (`beacon::VALUES_KEPT`): about 64 hours with hour-long epochs, about an hour with minute-long
-  ones. The window is part of this function. If the chain ever keeps values longer or shorter,
+  ones, and about 10.7 hours on the project's shared chain (epochs of 300 blocks at 2 s, so
+  10 minutes each). The window is part of this function. If the chain ever keeps values longer or shorter,
   that comes as a new function, and `beacon_v1` keeps answering for 64;
 - for a negative `epoch`.
 
@@ -70,10 +80,15 @@ A `view` method may call all three.
 epoch e      roll      the program fixes the player, the stake and the pick, and makes a
                        request for the beacon of epoch e + 2
 epoch e + 1            validators reveal their secrets for e + 2 (second half of the epoch)
-epoch e + 2  settle    the value is on-chain: anyone settles the roll on it
+epoch e + 2  settle    the value is on-chain: anyone settles the roll on it, and the program
+                       pays whoever does
 …
-epoch e + 34           the deadline (e + 2 + 32): a roll nobody settled is closed by the
-                       rule the program fixed before the roll
+epoch e + 34           the deadline (e + 2 + 32): the value is certainly still kept until here
+…
+epoch e + 65           the last epoch the chain keeps the value in (e + 2 + 63): the roll
+                       still settles on it, as it would have in epoch e + 2
+epoch e + 66           the value is gone. A roll nobody settled is closed by the rule the
+                       program fixed before the roll: forfeit, never a refund
 ```
 
 Why two epochs: during epoch `e` the validators are still committing for `e + 2`, and none of
@@ -95,7 +110,8 @@ put(&key, &record_with(request.to_bytes()));          // 28 bytes
 match random::settle(&request, b"dice/roll") {
     Outcome::Settled(value) => pay_out(1 + random::below(&value, 6)),
     Outcome::Pending        => abort(NOT_YET, b"not yet"),   // change nothing
-    Outcome::Expired | Outcome::TooFewReveals => refund(),   // the rule fixed in advance
+    Outcome::TooFewReveals  => refund(),                     // no randomness: no result
+    Outcome::Expired        => forfeit(),                    // never a refund (rule 3)
 }
 ```
 
@@ -106,47 +122,80 @@ match random::settle(&request, b"dice/roll") {
   first time.
 - `settle(&request, domain) -> Outcome`:
   - `Settled(value)`: `value` = BLAKE3(`domain` ‖ the program's address ‖ `id` (8 bytes, LE) ‖
-    the beacon value). The same on every call until the deadline. `domain` (at most 64 bytes)
-    says what the value is for, so one request can feed two draws that don't repeat each other;
+    the beacon value). The same on every call for as long as the chain keeps the target's
+    value: its own epoch and the 63 after it (`KEPT_EPOCHS`), before the deadline and after it.
+    `domain` (at most 64 bytes) says what the value is for, so one request can feed two draws
+    that don't repeat each other;
   - `Pending`: the target epoch's value isn't derived yet;
-  - `Expired`: the current epoch is past `deadline_epoch`. Checked first, so a late settle never
-    succeeds, even while the chain still keeps the value;
-  - `TooFewReveals`: the value is there, with fewer than `min_reveals` reveals.
+  - `TooFewReveals`: the value is there, with fewer than `min_reveals` reveals;
+  - `Expired`: the current epoch is past `deadline_epoch` **and** the chain no longer keeps the
+    value. Nobody can tell any more what the outcome was, or whether it had enough reveals. A
+    value that is still kept past the deadline settles as usual: when a request stops being
+    settleable depends on the chain's state alone, never on who looks or when they choose to.
 - `settle` only reads. The program removes or marks the request once it applied a final outcome,
   so it's applied once.
 - `below(&value, n)` is the value's first 8 bytes modulo `n`. The bias is under `n / 2^64`.
 
-`dice` (`node/vm/guests/dice`) is the worked example: `roll` (payable) records a request,
-`settle` pays a hit six stakes from the program's bank, and refunds the stake on `Expired` and
-`TooFewReveals`.
+`dice` (`node/vm/guests/dice`) is the worked example. `roll` (payable) records a request.
+`settle`, which anyone may send:
+
+| The roll's outcome | The player | Whoever sent the `settle` | The bank |
+|---|---|---|---|
+| a hit | six stakes | the bounty, from the bank | pays both |
+| a miss | nothing | the bounty, out of the stake | keeps the rest of the stake |
+| `TooFewReveals` | the whole stake back | nothing | unchanged |
+| `Expired` (nobody settled in 64 epochs) | nothing: the stake is forfeit | the bounty, out of the stake | keeps the rest of the stake |
+
+The bounty is a hundredth of the stake, rounded down, fixed with the roll. The bank counts it
+in what it must hold for every open roll, so a hit's settler is always paid. The odds are even
+(one face in six pays six stakes), so a hit's bounty is the bank's loss, a hundredth of a stake
+per roll on average: a real game would price it in. A stake under 100 drops carries no bounty.
 
 ### The rules
 
 1. **Everything the value decides is fixed in the request's transaction.** The player, the stake,
    the pick, the odds. Nothing that can change later may decide who wins.
 2. **The rule for a request that can't be decided is fixed then too:** what happens on `Expired`
-   and on `TooFewReveals`. Refund or forfeit, written in the code, never chosen at settlement.
-3. **Who may settle decides which rule is safe.** If only the requester can settle, expiry must
-   **forfeit**: with a refund, a loser would simply never settle. If **anyone** can settle (as in
-   `dice`), a refund is fine: whoever gains from the result settles it.
-4. **`min_reveals` is the program's, never the caller's.** A caller who could pass 0 would bet on
+   and on `TooFewReveals`, written in the code, never chosen at settlement.
+3. **`Expired` forfeits. It never refunds.** A request's value is public from its target epoch.
+   If letting a request expire gave the stake back, a requester would settle the ones that won
+   and wait out the ones that lost: hits paid, misses returned. That is true even when anyone
+   may settle, because nobody has a reason to settle a stranger's loss for nothing. So a request
+   whose value was usable and that nobody settled while the chain kept it costs the requester
+   what a loss would.
+4. **Let anyone settle, and pay whoever does.** A small bounty fixed with the request (`dice`: a
+   hundredth of the stake, out of the stake on a miss and a forfeit, from the bank on a hit)
+   gives third parties a reason to settle losses, so a request expires only if nobody at all
+   came in 64 epochs. If only the requester could settle, every loss would end `Expired`.
+5. **`TooFewReveals` may refund.** The value wasn't randomness, so there is no result to dodge,
+   and the reveal count is on the chain for everyone. `dice` gives the whole stake back and
+   pays no bounty for it (the player has the reason to send that `settle`). Such a request
+   still ends `Expired` if it is left until the value is gone. What a refund gives validators
+   who withhold is in section 5.2.
+6. **`min_reveals` is the program's, never the caller's.** A caller who could pass 0 would bet on
    the hash-chain fallback.
-5. **A `Pending` settle changes nothing.** Abort, so the transaction leaves no trace but its fee.
-6. **Never use `tx_hash`, `block_height`, `epoch`, a storage counter, the caller's address or the
+7. **A `Pending` settle changes nothing.** Abort, so the transaction leaves no trace but its fee.
+8. **Never use `tx_hash`, `block_height`, `epoch`, a storage counter, the caller's address or the
    order of transactions as randomness.** The sender or the block's leader picks or predicts every
    one of them.
-7. **Never read the beacon and act on it in one call.** A caller would look first and call only
+9. **Never read the beacon and act on it in one call.** A caller would look first and call only
    when it wins.
 
 ## 4. Latency, retention and deadlines
 
 - **Latency: more than one epoch, at most two.** A request made in epoch `e` settles from the
   first block of `e + 2`. With hour-long epochs that is one to two hours; with a dev chain's
-  minute-long epochs, one to two minutes. There is nothing faster today (section 8 proposes it).
-- **Retention: 64 epochs.** After that the value is gone and `beacon_v1` answers −1.
-- **The deadline: 32 epochs after the target**, half the retention window, so a request can
-  always be told apart: before the deadline the value is either not derived yet or still kept.
-  Past it `settle` answers `Expired` whatever the chain still holds.
+  minute-long epochs, one to two minutes; on the project's shared chain (epochs of 300 blocks
+  at 2 s: 10 minutes) a request settles 10 to 20 minutes after it is made. There is nothing
+  faster today (section 8 proposes it).
+- **Retention: 64 epochs**, the value's own and the 63 after it. After that the value is gone
+  and `beacon_v1` answers −1. On the shared chain that is about 10.7 hours (64 × 10 minutes).
+- **The deadline: 32 epochs after the target**, half the retention window (5.3 hours on the
+  shared chain). It tells "not yet" from "gone": through the deadline a missing value isn't
+  derived yet (`Pending`); past it, a missing value was dropped (`Expired`). A request settles
+  normally all the way to the end of the retention window, past the deadline too, so a program
+  can tell its users "settle within 64 epochs" and promise the first 32 whatever a later
+  version does to retention.
 
 ## 5. What the value is worth
 
@@ -158,6 +207,13 @@ without. That is one bit of influence.
 
 - **k validators working together choose among 2^k values.** A die has six faces: three
   colluding validators can usually pick a winning one.
+- **One operator with two validators chooses among four.** On the project's shared chain the
+  project itself runs 2 of the 7 validators. Alone, it can reveal both secrets, either one or
+  neither: four values. The chance that at least one of four shows a chosen die face is
+  1 − (5/6)^4, about 52%, against 17% for an honest roll. Every withheld reveal is on the chain
+  (`missed`, a slash, a jail), so it can't be done quietly or often, but it can be done. On that
+  chain, treat the beacon as fair only as far as you trust the project not to do that, and
+  only for things that aren't worth those slashes.
 - **All committers together know the value when they commit**, two epochs ahead. Randomness from
   the beacon assumes at least one validator that reveals is honest.
 
@@ -184,7 +240,7 @@ Two limits:
 
 - A program can't read the size of the validator set. `min_reveals` is a number fixed when the
   program is made. If the set shrinks below it, every request ends `TooFewReveals`.
-- If `TooFewReveals` refunds, validators who can push the count below `min_reveals` hold a veto:
+- If `TooFewReveals` refunds (as in `dice`), validators who can push the count below `min_reveals` hold a veto:
   they can turn a result they dislike into a refund, at the price of section 5.1's slashes. The
   higher `min_reveals`, the fewer withholders that takes. `f + 1` needs `n − f` of them, which
   `f` colluders don't have.
@@ -204,7 +260,7 @@ what `min_reveals` is for: `settle` refuses with `TooFewReveals`.
 - **The value is public the moment it's derived.** Anyone can compute a request's outcome before
   it settles. That's fine: nothing can be changed any more. It is why rule 1 matters.
 - **A leader can leave a settle out of its block.** It can't change the outcome, and the next
-  leader includes it. With `dice`'s rule, 32 epochs of leaders would have to agree.
+  leader includes it. With `dice`'s rules, 64 epochs of leaders would have to agree, each turning down a bounty.
 - **The hash chain binds epochs together.** Each value includes the one before, so a withheld
   reveal also changes every later value. That gives a withholder nothing more: it can't see
   later reveals.
@@ -232,8 +288,9 @@ blockula program call <address> settle --input 0000000000000000                 
 ```
 
 `scripts/randomness-e2e.sh` does all of this on four validators it summons into a temporary
-directory: a normal roll, a roll whose epoch one validator can't reveal for, and a roll left past
-its deadline.
+directory: a normal roll settled by a third party for the bounty, a roll whose epoch one
+validator can't reveal for, a roll settled past its deadline, and a roll left until its value
+is gone (forfeit).
 
 A one-validator dev chain has one reveal per epoch from epoch 3 on, so `min_reveals` of 1 is the
 most that settles there.
@@ -246,9 +303,14 @@ most that settles there.
 | `beacon_v1`: −1 before derivation, −1 after pruning, reveal counts, the same on every engine and every run | `node/vm/tests/randomness.rs`; against the real beacon's filing and pruning, `the_view_reads_the_beacon_from_derivation_until_it_is_pruned` |
 | `blake3_v1`, `epoch_v1`: results, bounds, fuel | `node/vm/tests/randomness.rs` |
 | `dice` and `abi::random` | `node/vm/tests/randomness.rs` (in memory), `node/src/programs/exec/tests/randomness.rs` (one validator) |
-| Four validators: a normal settle, a withheld reveal (jailed, three reveals), no reveals (refund), expiry (refund), the same blocks, roots and receipts on every node | `node/src/sim/programs.rs`, `the_dice_settles_identically_on_four_validators` |
-| Four real nodes on local ports, driven with `blockula program`: a settle on 4 reveals, a settle on 3 with the withholder jailed, an expiry refund | `scripts/randomness-e2e.sh` (about 8 minutes; not in CI) |
-| v1 history replays unchanged | `node/testdata/replay` ([REPLAY.md](REPLAY.md)) |
+| No free option: a loser who waits past the deadline gets no refund (a miss while the value is kept, a forfeit after) | `a_loser_who_waits_past_the_deadline_gets_no_refund`; on a chain, `the_dice_settles_refunds_and_forfeits_on_the_chains_beacon` |
+| A third party who settles is paid the bounty (from the stake on a miss, the bank on a hit) | `a_third_party_settling_earns_the_bounty` |
+| Too few reveals still refund the whole stake | `too_few_reveals_refund_the_stake` |
+| Four validators: a normal settle, a withheld reveal (jailed, three reveals), no reveals (refund), a settle past the deadline, a forfeit once the value is gone, the same blocks, roots and receipts on every node | `node/src/sim/programs.rs`, `the_dice_settles_identically_on_four_validators` |
+| Four real nodes on local ports, driven with `blockula program`: a settle on 4 reveals with its bounty, a settle on 3 with the withholder jailed, a settle past the deadline, a forfeit | `scripts/randomness-e2e.sh` (about 12 minutes; not in CI) |
+| v1 history replays unchanged | `node/testdata/replay/v1-*` ([REPLAY.md](REPLAY.md)) |
+| v2 history replays unchanged, the refusal of code importing `beacon_v1` included | `node/testdata/replay/v2-programs`, `the_v2_corpus_replays` |
+| The version numbers can't drift | `node/src/upgrade.rs`: compile-time asserts on `abi::FIRST_VERSION` and `abi::RANDOMNESS_VERSION` |
 | Fuzzing | `node/vm/fuzz` deploys `dice` and takes the height and the reveal count from its input |
 
 ## 8. Proposal: fast per-block randomness

@@ -148,7 +148,7 @@ refuse send-to-unpayable "isn't payable" $P call "$PROGRAM" increment --value 1 
 refuse short-storage-limit "is below the deposit" $P upload "$GUESTS/token.wasm" --interface "$GUESTS/token.iface.json" --storage-limit 0.000001 --yes --rpc "$RPC"
 # The dice imports host functions protocol v3 adds (docs/RANDOMNESS.md); this chain runs v2, which
 # would refuse the upload and still charge its fee.
-refuse upload-code-for-a-later-version "this chain runs protocol v2, which would refuse this code" $P upload "$GUESTS/dice.wasm" --interface "$GUESTS/dice.iface.json" --yes --rpc "$RPC"
+refuse upload-code-for-a-later-version "the next block runs protocol v2, which would refuse this code" $P upload "$GUESTS/dice.wasm" --interface "$GUESTS/dice.iface.json" --yes --rpc "$RPC"
 has "$LAST" "upload validation rule 5"
 has "$LAST" "nothing was signed"
 

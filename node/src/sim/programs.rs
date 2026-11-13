@@ -10,7 +10,7 @@
 //! | [`a_lagging_verifier_replays_each_block_once_and_keeps_voting`] | 3 |
 //! | [`programs_switched_on_by_council_vote_at_a_height`] | 4 |
 //! | [`a_pause_signed_into_full_blocks_lands_through_its_duty_lane`] and [`a_pause_signed_by_an_owner_lands_with_a_tip`] | beside 1: §2.5's lane and the owner form's tip, which blocks full of transactions would otherwise shut a pause out of |
-//! | [`the_dice_settles_identically_on_four_validators`] | docs/RANDOMNESS.md: protocol v3's `beacon_v1` under real beacon rounds: a roll settled on four reveals, one on three after a validator withheld (and was jailed), one refunded on the hash-chain fallback, one refunded past its deadline |
+//! | [`the_dice_settles_identically_on_four_validators`] | docs/RANDOMNESS.md: protocol v3's `beacon_v1` under real beacon rounds: a roll settled on four reveals, one on three after a validator withheld (and was jailed), one refunded on the hash-chain fallback, one settled past its deadline while its value is kept, one forfeited once the value is gone |
 //!
 //! **What every scenario checks at every height** ([`Watch`]): the same block hash, state root and
 //! program receipts (their JSON) on every validator, and the same `fuel_rate` where a validator is
@@ -1521,8 +1521,9 @@ const DICE: Guest = (include_bytes!("../../vm/tests/programs/dice.wasm"), includ
 /// 3. **A withheld reveal.** Validator 2 commits for an epoch and never reveals. The value is
 ///    derived all the same, from the other three reveals; validator 2 is on its `missed` list,
 ///    jailed, and out of that epoch's set; the roll that named the epoch settles on it.
-/// 4. **Expiry.** A roll nobody settles for 32 epochs past its target is refunded, while the
-///    state still keeps the value it would have settled on.
+/// 4. **Past the deadline.** A roll nobody settles for 32 epochs past its target still settles
+///    on its value, which the state keeps for 64, and pays its settler the bounty. A roll left
+///    until the value is gone is forfeit: the stake stays in the bank, less the bounty.
 #[test]
 fn the_dice_settles_identically_on_four_validators() {
     use crate::upgrade::PREVIEW_PROTOCOL_VERSION;
@@ -1531,6 +1532,8 @@ fn the_dice_settles_identically_on_four_validators() {
     const EB: u64 = 8;
     const MIN_REVEALS: u32 = 2;
     const BANK: u64 = 100 * FANG;
+    /// The dice pays whoever settles a roll a hundredth of its stake.
+    const BOUNTY: u64 = FANG / 100;
     const NEVER: u64 = u64::MAX;
     let (root, homes, mut genesis, seeds) = summon_with("dice", EB, &[]);
     genesis.upgrades = vec![ScheduledUpgrade { version: PREVIEW_PROTOCOL_VERSION, activation_height: 1 }];
@@ -1645,7 +1648,7 @@ fn the_dice_settles_identically_on_four_validators() {
         let bank = balance(&vals[0], &dice.address);
         let tx = u.alice.send(&vals[0], g, settle(fallback)).unwrap();
         included_everywhere(&context, &mut watch, &vals, &tx).await;
-        assert_eq!(settled(&vals[2], &tx), (0, "refunded".into(), [&fallback.to_le_bytes()[..], &bytes32(&bob), &FANG.to_le_bytes(), &[2]].concat()), "too few reveals");
+        assert_eq!(settled(&vals[2], &tx), (0, "refunded".into(), [&fallback.to_le_bytes()[..], &bytes32(&bob), &FANG.to_le_bytes()].concat()), "too few reveals: the whole stake, no bounty");
         assert_eq!(balance(&vals[0], &dice.address), bank - FANG);
 
         // The normal roll's epoch: four reveals, nobody missed.
@@ -1656,8 +1659,8 @@ fn the_dice_settles_identically_on_four_validators() {
         let tx = u.alice.send(&vals[1], g, settle(normal)).unwrap();
         included_everywhere(&context, &mut watch, &vals, &tx).await;
         let payout = if rolled_face == 5 { 6 * FANG } else { 0 };
-        assert_eq!(settled(&vals[3], &tx), (rolled_face, "settled".into(), [&normal.to_le_bytes()[..], &bytes32(&carol), &[rolled_face], &payout.to_le_bytes()].concat()));
-        assert_eq!(balance(&vals[0], &dice.address), bank - payout);
+        assert_eq!(settled(&vals[3], &tx), (rolled_face, "settled".into(), [&normal.to_le_bytes()[..], &bytes32(&carol), &[rolled_face], &payout.to_le_bytes(), &bytes32(&alice), &BOUNTY.to_le_bytes()].concat()));
+        assert_eq!(balance(&vals[0], &dice.address), bank - payout - BOUNTY, "alice settled carol's roll and got the bounty");
 
         // ---- 3. Validator 2 withholds its reveal for the next roll's epoch.
         let tx = u.bob.send(&vals[0], g, roll(1)).unwrap();
@@ -1683,33 +1686,56 @@ fn the_dice_settles_identically_on_four_validators() {
         let tx = u.carol.send(&vals[3], g, settle(biased)).unwrap();
         included_everywhere(&context, &mut watch, &vals, &tx).await;
         let payout = if rolled_face == 1 { 6 * FANG } else { 0 };
-        assert_eq!(settled(&vals[1], &tx), (rolled_face, "settled".into(), [&biased.to_le_bytes()[..], &bytes32(&bob), &[rolled_face], &payout.to_le_bytes()].concat()));
-        assert_eq!(balance(&vals[0], &dice.address), bank - payout);
+        assert_eq!(settled(&vals[1], &tx), (rolled_face, "settled".into(), [&biased.to_le_bytes()[..], &bytes32(&bob), &[rolled_face], &payout.to_le_bytes(), &bytes32(&carol), &BOUNTY.to_le_bytes()].concat()));
+        assert_eq!(balance(&vals[0], &dice.address), bank - payout - BOUNTY);
 
-        // ---- 4. A roll left alone until its deadline has passed.
+        // ---- 4. Two rolls left alone until their deadline has passed.
+        let tx = u.carol.send(&vals[1], g, roll(6)).unwrap();
+        let at = included_everywhere(&context, &mut watch, &vals, &tx).await;
+        let (late, late_target, late_deadline) = rolled(&vals[0], &tx);
+        assert_eq!((late, late_deadline), (3, late_target + 32));
+        // The second roll in the same epoch, so one wait covers both.
+        assert!(at % EB < EB - 3, "room for another roll in epoch {}", at / EB);
         let tx = u.carol.send(&vals[1], g, roll(6)).unwrap();
         included_everywhere(&context, &mut watch, &vals, &tx).await;
-        let (stale, stale_target, stale_deadline) = rolled(&vals[0], &tx);
-        assert_eq!((stale, stale_deadline), (3, stale_target + 32));
-        let bank = balance(&vals[0], &dice.address);
-        // 33 epochs on three validators; each wait is well inside `until`'s ten minutes.
-        for epoch in (epoch_now(&vals) + 1..=stale_deadline + 1).step_by(8).chain([stale_deadline + 1]) {
+        let (stale, stale_target, _) = rolled(&vals[0], &tx);
+        assert_eq!((stale, stale_target), (4, late_target));
+        // Each wait is well inside `until`'s ten minutes.
+        let wait = |to: u64| (epoch_now(&vals) + 1..=to).step_by(8).chain([to]);
+        // 33 epochs on three validators: past the deadline, the value is still in the state, so
+        // the roll settles on it like any other. Waiting gave carol nothing.
+        for epoch in wait(late_deadline + 1) {
             until_height(&context, &mut watch, &vals, epoch * EB).await;
         }
-        let kept = beacon_of(&vals[0], stale_target);
-        assert!(kept.reveals >= MIN_REVEALS, "its value is still in the state and would have settled it");
+        let kept = beacon_of(&vals[0], late_target);
+        assert!(kept.reveals >= MIN_REVEALS);
+        let (bank, rolled_face) = (balance(&vals[0], &dice.address), face(late, &kept.value));
+        let tx = u.bob.send(&vals[0], g, settle(late)).unwrap();
+        included_everywhere(&context, &mut watch, &vals, &tx).await;
+        let payout = if rolled_face == 6 { 6 * FANG } else { 0 };
+        assert_eq!(settled(&vals[2], &tx), (rolled_face, "settled".into(), [&late.to_le_bytes()[..], &bytes32(&carol), &[rolled_face], &payout.to_le_bytes(), &bytes32(&bob), &BOUNTY.to_le_bytes()].concat()), "past the deadline, on the kept value");
+        assert_eq!(balance(&vals[0], &dice.address), bank - payout - BOUNTY);
+        // The value's last epoch is its target + 63. In the next it is gone on every node, and
+        // the other roll is forfeit: nothing for carol, the bounty for bob, the rest to the bank.
+        for epoch in wait(stale_target + crate::beacon::VALUES_KEPT) {
+            until_height(&context, &mut watch, &vals, epoch * EB).await;
+        }
+        for (i, v) in vals.iter().enumerate() {
+            assert!(!v.chain.lock().state.beacon.values.contains_key(&stale_target), "node {i} dropped epoch {stale_target}'s value");
+        }
+        let (bank, carol_before) = (balance(&vals[0], &dice.address), balance(&vals[0], &carol));
         let tx = u.bob.send(&vals[0], g, settle(stale)).unwrap();
         included_everywhere(&context, &mut watch, &vals, &tx).await;
-        assert_eq!(settled(&vals[2], &tx), (0, "refunded".into(), [&stale.to_le_bytes()[..], &bytes32(&carol), &FANG.to_le_bytes(), &[1]].concat()), "expired");
-        assert_eq!(balance(&vals[0], &dice.address), bank - FANG);
-        let _ = alice;
+        assert_eq!(settled(&vals[2], &tx), (0, "forfeited".into(), [&stale.to_le_bytes()[..], &bytes32(&carol), &FANG.to_le_bytes(), &bytes32(&bob), &BOUNTY.to_le_bytes()].concat()), "the value is gone");
+        assert_eq!(balance(&vals[0], &dice.address), bank - BOUNTY, "the stake stayed in the bank");
+        assert!(balance(&vals[0], &carol) - carol_before < FANG / 2, "no refund: at most the roll's deposit");
 
         let h = floor(&vals) + 2;
         until_height(&context, &mut watch, &vals, h).await;
         finish(&vals);
         let c = vals[0].chain.lock();
         assert!((1..=c.height()).all(|h| c.block(h).unwrap().version == PREVIEW_PROTOCOL_VERSION));
-        println!("✓ the dice on 4 validators under v{PREVIEW_PROTOCOL_VERSION}: refunded on the hash chain (epoch {fallback_target}), settled on 4 reveals (epoch {normal_target}) and on 3 after a withheld reveal (epoch {biased_target}, the withholder jailed), refunded past its deadline (epoch {stale_deadline}); {} heights compared, {} blocks", watch.compared(), c.height());
+        println!("✓ the dice on 4 validators under v{PREVIEW_PROTOCOL_VERSION}: refunded on the hash chain (epoch {fallback_target}), settled on 4 reveals (epoch {normal_target}) and on 3 after a withheld reveal (epoch {biased_target}, the withholder jailed), settled past its deadline (epoch {late_deadline}), forfeited once the value was gone (epoch {}); {} heights compared, {} blocks", stale_target + crate::beacon::VALUES_KEPT, watch.compared(), c.height());
     });
     std::fs::remove_dir_all(root).ok();
 }

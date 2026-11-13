@@ -9,8 +9,9 @@
 //!   height's epoch; each charges its schedule price, and every answer is the same on every
 //!   engine and every run.
 //! * **The pattern.** `dice`: a roll can't settle before its epoch's beacon, settles on
-//!   BLAKE3(domain ‖ program ‖ request id ‖ beacon value) once it's there, and is refunded when
-//!   the beacon had too few reveals or the deadline passed.
+//!   BLAKE3(domain ‖ program ‖ request id ‖ beacon value) for as long as the chain keeps that
+//!   value, pays whoever settles it a bounty, is refunded when the beacon had too few reveals,
+//!   and is forfeit (never refunded) once the value is gone.
 
 use std::path::Path;
 
@@ -306,12 +307,17 @@ const BANK: u64 = 100 * FANG;
 const STAKE: u64 = FANG;
 /// The dice's reveal floor in these tests.
 const MIN_REVEALS: u32 = 2;
+/// What the dice pays whoever settles a roll of `STAKE`: a hundredth of it.
+const BOUNTY: u64 = STAKE / 100;
+/// More than the storage deposit a closed roll hands back to the player who bonded it (about
+/// 19,000 drops), and far less than a bounty or a stake.
+const DEPOSIT: u64 = 100_000;
 
 /// A chain of 10-block epochs with the dice created (`init` run as its initializer), its bank
 /// funded, and alice and bob holding 50 FANG each.
 fn dice_host() -> MemHost {
     let mut host = MemHost::new();
-    host.fund(addr("alice"), 50 * FANG).fund(addr("bob"), 50 * FANG).fund(addr("house"), 200 * FANG);
+    host.fund(addr("alice"), 50 * FANG).fund(addr("bob"), 50 * FANG).fund(addr("carol"), 50 * FANG).fund(addr("house"), 200 * FANG);
     host.deploy(addr("dice"), &guest("dice"));
     host.set_method(addr("dice"), "init", MethodKind::Init, false);
     host.set_method(addr("dice"), "settle", MethodKind::Call, false);
@@ -350,7 +356,8 @@ fn event(r: &Receipt) -> (&str, &[u8]) {
 }
 
 /// The safe pattern end to end: a roll names the beacon two epochs ahead, can't settle before it,
-/// and then settles on a value nobody knew at the roll: a hit pays six stakes, a miss none.
+/// and then settles on a value nobody knew at the roll: a hit pays six stakes, a miss none, and
+/// whoever settles either gets the bounty.
 #[test]
 fn a_roll_settles_two_epochs_later_on_the_beacon() {
     let mut host = dice_host();
@@ -386,14 +393,15 @@ fn a_roll_settles_two_epochs_later_on_the_beacon() {
     // Anyone settles: here each settles the other's.
     let r = settle(&mut host, "bob", 0);
     assert_eq!(returned(&r), [face(0, &value)]);
-    assert_eq!(event(&r), ("settled", &[&le(0)[..], &addr("alice"), &[face(0, &value)], &le(0)].concat()[..]));
+    assert_eq!(event(&r), ("settled", &[&le(0)[..], &addr("alice"), &[face(0, &value)], &le(0), &addr("bob"), &le(BOUNTY)].concat()[..]));
     let r = settle(&mut host, "alice", 1);
     assert_eq!(returned(&r), [hit]);
-    assert_eq!(event(&r), ("settled", &[&le(1)[..], &addr("bob"), &[hit], &le(6 * STAKE)].concat()[..]));
-    // The settler got back nothing but the removed roll's deposit, which the roller had paid.
-    assert_eq!(balance(&host, "dice"), BANK + 2 * STAKE - 6 * STAKE);
-    assert!(balance(&host, "bob") >= before.1 + 6 * STAKE && balance(&host, "alice") >= before.0);
-    assert!(balance(&host, "alice") < before.0 + STAKE, "a miss pays nothing");
+    assert_eq!(event(&r), ("settled", &[&le(1)[..], &addr("bob"), &[hit], &le(6 * STAKE), &addr("alice"), &le(BOUNTY)].concat()[..]));
+    // Each settler got the bounty, the miss's from the stake, the hit's from the bank (and each
+    // player the deposit of their removed roll).
+    assert_eq!(balance(&host, "dice"), BANK + 2 * STAKE - 6 * STAKE - 2 * BOUNTY);
+    assert!(balance(&host, "bob") >= before.1 + 6 * STAKE + BOUNTY && balance(&host, "alice") >= before.0 + BOUNTY);
+    assert!(balance(&host, "alice") < before.0 + STAKE, "a miss pays its player nothing");
     // Settled once: the rolls are gone, and what the bank owes is back to nothing.
     assert_eq!(abort_code(&settle(&mut host, "alice", 0)), Some(34));
     assert_eq!(abort_code(&settle(&mut host, "bob", 1)), Some(34));
@@ -402,13 +410,14 @@ fn a_roll_settles_two_epochs_later_on_the_beacon() {
 }
 
 /// The outcome is the request's own: two rolls on one epoch's beacon get unrelated values, and
-/// the same roll reads the same value whoever settles it and whenever, until its deadline.
+/// the same roll reads the same value whoever settles it and whenever: before its deadline
+/// (epoch 41) and after it, through the last epoch the chain keeps the value in (9 + 63).
 #[test]
 fn each_request_has_its_own_value_and_it_never_changes() {
     let value = [0x77; 32];
     let faces: Vec<u8> = (0..12).map(|id| face(id, &value)).collect();
     assert!(faces.windows(2).any(|w| w[0] != w[1]), "{faces:?}");
-    for settle_at in [9, 10, 25, 41] {
+    for settle_at in [9, 10, 25, 41, 42, 72] {
         let mut host = dice_host();
         at_epoch(&mut host, 7);
         for id in 0..12u64 {
@@ -422,26 +431,29 @@ fn each_request_has_its_own_value_and_it_never_changes() {
     }
 }
 
-/// With fewer reveals than the program asks for the beacon isn't used: the stake goes back,
-/// whether the value came from one reveal or from none (the hash-chain fallback, which anyone
-/// could have computed ahead).
+/// With fewer reveals than the program asks for the beacon isn't used: the whole stake goes
+/// back, whether the value came from one reveal or from none (the hash-chain fallback, which
+/// anyone could have computed ahead), before the deadline or after it, and no bounty is paid.
 #[test]
 fn too_few_reveals_refund_the_stake() {
-    for reveals in [0, 1] {
+    for (reveals, settle_at) in [(0, 5), (1, 5), (1, 5 + 33), (0, 5 + 63)] {
         let mut host = dice_host();
         at_epoch(&mut host, 3);
         let value = [9; 32];
         // The pick that would have won on this value: it's refunded all the same.
         let pick = face(0, &value);
         assert!(roll(&mut host, "alice", pick, STAKE).ok());
-        let after_roll = balance(&host, "alice");
+        let after_roll = (balance(&host, "alice"), balance(&host, "bob"));
         host.beacons.insert(5, Beacon { value, reveals });
-        at_epoch(&mut host, 5);
+        at_epoch(&mut host, settle_at);
         let r = settle(&mut host, "bob", 0);
         assert_eq!(returned(&r), [0], "{reveals} reveals");
-        assert_eq!(event(&r), ("refunded", &[&le(0)[..], &addr("alice"), &le(STAKE), &[2]].concat()[..]));
-        assert!(balance(&host, "alice") >= after_roll + STAKE && balance(&host, "alice") < after_roll + 2 * STAKE);
+        assert_eq!(event(&r), ("refunded", &[&le(0)[..], &addr("alice"), &le(STAKE)].concat()[..]));
+        let back = balance(&host, "alice") - after_roll.0;
+        assert!((STAKE..STAKE + DEPOSIT).contains(&back), "the whole stake (and the roll's deposit), in epoch {settle_at}: {back}");
+        assert_eq!(balance(&host, "bob"), after_roll.1, "no bounty on a refund");
         assert_eq!(balance(&host, "dice"), BANK);
+        assert_eq!(host.storage(&addr("dice"), b"o").unwrap().value, le(0));
         assert_eq!(abort_code(&settle(&mut host, "bob", 0)), Some(34), "refunded once");
     }
     // Exactly the floor is enough.
@@ -453,29 +465,79 @@ fn too_few_reveals_refund_the_stake() {
     assert_eq!(event(&settle(&mut host, "bob", 0)).0, "settled");
 }
 
-/// A roll nobody settled by its deadline (target + 32 epochs) is refunded, even while the chain
-/// still keeps its beacon value and even if it had won; in the deadline's own epoch it settles.
+/// The free option is closed: a player whose roll missed gains nothing by waiting. Past the
+/// deadline (target + 32) the roll still settles as a miss for as long as the chain keeps the
+/// value (through target + 63), whoever sends the settle; once the value is gone the stake is
+/// forfeit to the bank. The player never gets it back, and a hit left that long is lost too.
 #[test]
-fn a_roll_past_its_deadline_is_refunded() {
+fn a_loser_who_waits_past_the_deadline_gets_no_refund() {
     let value = [3; 32];
-    let pick = face(0, &value);
-    for (epoch, expired) in [(5 + 32, false), (5 + 33, true), (5 + 63, true), (5 + 64, true), (1_000, true)] {
-        let mut host = dice_host();
-        at_epoch(&mut host, 3);
-        assert!(roll(&mut host, "alice", pick, STAKE).ok());
-        // The chain keeps 64 epochs of values: epoch 5's is there until epoch 5 + 63 ends.
-        if epoch < 5 + 64 {
-            host.beacons.insert(5, Beacon { value, reveals: 4 });
+    let hit = face(0, &value);
+    let miss = hit % 6 + 1;
+    // (the epoch the settle lands in, whether the chain still keeps epoch 5's value)
+    for (epoch, kept) in [(5 + 32, true), (5 + 33, true), (5 + 63, true), (5 + 64, false), (1_000, false)] {
+        for (pick, settler) in [(miss, "alice"), (miss, "carol"), (hit, "alice"), (hit, "carol")] {
+            let mut host = dice_host();
+            at_epoch(&mut host, 3);
+            assert!(roll(&mut host, "alice", pick, STAKE).ok());
+            let after_roll = balance(&host, "alice");
+            // The chain keeps 64 epochs of values: epoch 5's is there until epoch 5 + 63 ends.
+            if kept {
+                host.beacons.insert(5, Beacon { value, reveals: 4 });
+            }
+            at_epoch(&mut host, epoch);
+            let r = settle(&mut host, settler, 0);
+            let what = format!("epoch {epoch}, pick {pick}, settled by {settler}");
+            let tail = [&addr(settler)[..], &le(BOUNTY)].concat();
+            // All alice can get back: her roll's deposit, and the bounty if she settles it herself.
+            let own = DEPOSIT + if settler == "alice" { BOUNTY } else { 0 };
+            if kept && pick == hit {
+                assert_eq!(returned(&r), [hit], "{what}");
+                assert_eq!(event(&r), ("settled", &[&le(0)[..], &addr("alice"), &[hit], &le(6 * STAKE), &tail].concat()[..]), "{what}");
+                assert_eq!(balance(&host, "dice"), BANK + STAKE - 6 * STAKE - BOUNTY, "{what}");
+                continue;
+            }
+            // Every other case leaves the stake in the bank, less the settler's bounty.
+            if kept {
+                assert_eq!(returned(&r), [hit], "{what}");
+                assert_eq!(event(&r), ("settled", &[&le(0)[..], &addr("alice"), &[hit], &le(0), &tail].concat()[..]), "{what}");
+            } else {
+                assert_eq!(returned(&r), [0], "{what}");
+                assert_eq!(event(&r), ("forfeited", &[&le(0)[..], &addr("alice"), &le(STAKE), &tail].concat()[..]), "{what}");
+            }
+            assert_eq!(balance(&host, "dice"), BANK + STAKE - BOUNTY, "{what}");
+            assert!(balance(&host, "alice") <= after_roll + own, "{what}: no refund, {} > {}", balance(&host, "alice"), after_roll + own);
+            assert!(own < STAKE);
+            assert_eq!(host.storage(&addr("dice"), b"o").unwrap().value, le(0), "{what}");
+            assert_eq!(abort_code(&settle(&mut host, "alice", 0)), Some(34), "{what}: closed once");
         }
-        at_epoch(&mut host, epoch);
-        let r = settle(&mut host, "bob", 0);
-        if expired {
-            assert_eq!(returned(&r), [0], "epoch {epoch}");
-            assert_eq!(event(&r), ("refunded", &[&le(0)[..], &addr("alice"), &le(STAKE), &[1]].concat()[..]), "epoch {epoch}");
-            assert_eq!(balance(&host, "dice"), BANK);
-        } else {
-            assert_eq!(returned(&r), [pick], "epoch {epoch}: the deadline's own epoch still settles");
-            assert_eq!(balance(&host, "dice"), BANK + STAKE - 6 * STAKE);
+    }
+}
+
+/// Why anyone settles a stranger's miss: the settler is paid a hundredth of the stake, out of
+/// the stake on a miss and a forfeit, out of the bank on a hit. A stake under 100 drops has no
+/// bounty. What the bank owes counts each open roll's bounty, so a hit's settler is always paid.
+#[test]
+fn a_third_party_settling_earns_the_bounty() {
+    let value = [0x42; 32];
+    // (stake, the bounty it carries)
+    for (stake, bounty) in [(STAKE, BOUNTY), (5 * STAKE, 5 * BOUNTY), (12_345, 123), (199, 1), (99, 0)] {
+        for hit in [false, true] {
+            let mut host = dice_host();
+            at_epoch(&mut host, 3);
+            let pick = if hit { face(0, &value) } else { face(0, &value) % 6 + 1 };
+            assert!(roll(&mut host, "alice", pick, stake).ok());
+            assert_eq!(host.storage(&addr("dice"), b"o").unwrap().value, le(6 * stake + bounty), "six stakes and the bounty");
+            host.beacons.insert(5, Beacon { value, reveals: MIN_REVEALS });
+            at_epoch(&mut host, 5);
+            let (alice, carol) = (balance(&host, "alice"), balance(&host, "carol"));
+            let r = settle(&mut host, "carol", 0);
+            let payout = if hit { 6 * stake } else { 0 };
+            assert_eq!(event(&r), ("settled", &[&le(0)[..], &addr("alice"), &[face(0, &value)], &le(payout), &addr("carol"), &le(bounty)].concat()[..]));
+            assert!((alice + payout..alice + payout + DEPOSIT).contains(&balance(&host, "alice")), "stake {stake}, hit {hit}");
+            assert_eq!(balance(&host, "carol"), carol + bounty, "stake {stake}, hit {hit}: the bounty and nothing else");
+            assert_eq!(balance(&host, "dice"), BANK + stake - payout - bounty, "stake {stake}, hit {hit}");
+            assert_eq!(host.storage(&addr("dice"), b"o").unwrap().value, le(0));
         }
     }
 }
@@ -492,10 +554,12 @@ fn a_roll_needs_a_pick_a_stake_and_a_bank_that_covers_it() {
     assert_eq!(abort_code(&tx(&mut host, "alice", "dice", "roll", vec![1, 2], STAKE, MethodKind::Call)), Some(1));
     assert_eq!(trap(&tx(&mut host, "alice", "dice", "settle", le(0), 1, MethodKind::Call)), Some(TrapKind::NotPayable));
     assert_eq!(abort_code(&tx(&mut host, "alice", "dice", "init", 0u32.to_le_bytes().to_vec(), 0, MethodKind::Init)), Some(30));
-    // 100 FANG of bank: a 20 FANG stake could pay 120, of which the stake itself covers 20.
-    assert!(roll(&mut host, "alice", 1, 20 * FANG).ok(), "6 × 20 = 120 = the bank and the stake");
-    assert_eq!(abort_code(&roll(&mut host, "bob", 1, FANG / 1_000)), Some(33), "nothing is left to cover another");
-    assert_eq!(host.storage(&addr("dice"), b"o").unwrap().value, le(120 * FANG));
+    // 100 FANG of bank: a 20 FANG stake could pay 120 and a bounty of 0.2, and the bank and the
+    // stake hold 120. A 19 FANG stake is covered: 114.19 of 119.
+    assert_eq!(abort_code(&roll(&mut host, "alice", 1, 20 * FANG)), Some(33), "the hit's bounty isn't covered");
+    assert!(roll(&mut host, "alice", 1, 19 * FANG).ok());
+    assert_eq!(abort_code(&roll(&mut host, "bob", 1, FANG)), Some(33), "114.19 + 6.01 is more than the 120 there would be");
+    assert_eq!(host.storage(&addr("dice"), b"o").unwrap().value, le(114 * FANG + 19 * FANG / 100));
     // Before `init` there's no reveal floor to roll under.
     let mut fresh = MemHost::new();
     fresh.fund(addr("alice"), 50 * FANG);
