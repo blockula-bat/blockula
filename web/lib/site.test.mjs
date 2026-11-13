@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { CONTRIBUTE_PROMPT, VALIDATOR_PROMPT, X_ACCOUNT, X_URL, demoNode, isPrivateHost, nodeAddress, validatorPrompt, walletOf } from "./site.ts";
+import { CONTRIBUTE_PROMPT, VALIDATOR_PROMPT, X_ACCOUNT, X_URL, demoNode, isPrivateHost, nodeAddress, validatorPrompt, walletOf, xWalletOf } from "./site.ts";
 
 test("https anywhere, plain http only on this machine or a private network (mcp/src/network.ts's rule)", () => {
   for (const [input, url] of [
@@ -47,6 +47,8 @@ test("private hosts", () => {
 test("the wallet a node serves, and the demo node's check", () => {
   assert.equal(walletOf("https://chain.example"), "https://chain.example/wallet/");
   assert.equal(walletOf("https://chain.example/"), "https://chain.example/wallet/");
+  assert.equal(xWalletOf("https://chain.example"), "https://chain.example/wallet/x/");
+  assert.equal(xWalletOf("https://chain.example/"), "https://chain.example/wallet/x/");
   assert.equal(demoNode(undefined), undefined);
   assert.equal(demoNode("  "), undefined);
   assert.equal(demoNode("https://demo.blockula.app/"), "https://demo.blockula.app");

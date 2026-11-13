@@ -34,3 +34,13 @@ test("with no demo configured, the demo rests and the page talks to no node", as
   expect(fetches).toEqual([]);
   expect(await cspViolations(page)).toEqual([]);
 });
+
+test("without a demo node, /x still explains how to link and does not point at a demo wallet", async ({ page }) => {
+  await watchCsp(page);
+  const res = await page.goto("/x");
+  expect(res?.status()).toBe(200);
+  await expect(page.getByRole("heading", { name: "Link your X account", level: 1 })).toBeVisible();
+  await expect(page.getByTestId("site-x-page")).toBeVisible();
+  await expect(page.getByTestId("site-x-demo-wallet")).toHaveCount(0);
+  expect(await cspViolations(page)).toEqual([]);
+});

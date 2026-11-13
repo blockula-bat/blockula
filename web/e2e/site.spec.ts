@@ -108,6 +108,7 @@ test("agents first: the one line, the install and the guestbook; then the demo c
   // The project's one X account: in the footer, and in the nav on wide screens.
   await expect(page.getByTestId("x-account")).toHaveText("@BlockulaChain on X");
   await expect(page.getByTestId("x-account")).toHaveAttribute("href", "https://x.com/BlockulaChain");
+  await expect(page.getByTestId("site-x-link")).toHaveAttribute("href", "/x");
   await expect(page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: "@BlockulaChain on X" })).toHaveAttribute("href", "https://x.com/BlockulaChain");
   await expect(page.getByTestId("imprint-note")).toContainText("The coins have no value");
   await expect(page.getByTestId("imprint-note")).toContainText("for education and research only");
@@ -247,5 +248,18 @@ test("the site serves its Terms of Use and Privacy Policy, and sends wallet rout
   await expect(page.getByRole("heading", { name: "Privacy Policy", level: 1 })).toBeVisible();
   await page.goto("/send");
   await expect(page).toHaveURL(/\/$/);
+  expect(await cspViolations(page)).toEqual([]);
+});
+
+test("the site serves /x, how to link an X account", async ({ page }) => {
+  await watchCsp(page);
+  const res = await page.request.get("/x", { maxRedirects: 0 });
+  expect(res.status()).toBe(200);
+  await page.goto("/x");
+  await expect(page.getByRole("heading", { name: "Link your X account", level: 1 })).toBeVisible();
+  await expect(page.getByTestId("site-x-page")).toBeVisible();
+  await expect(page.getByTestId("site-x-demo-wallet")).toHaveAttribute("href", `${DEMO_NODE}/wallet/x/`);
+  await expect(page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: "Demo" })).toHaveAttribute("href", "/#demo");
+  await expect(page.getByTestId("site-x-link")).toHaveAttribute("href", "/x");
   expect(await cspViolations(page)).toEqual([]);
 });
