@@ -51,8 +51,8 @@
 //!
 //! ‡ Importable only from protocol v3 (`abi::RANDOMNESS_VERSION`), so no v2 block can charge
 //! them: they're priced in this schedule rather than a new one because nothing a v2 block runs
-//! changes. Not yet measured on the floor runners (docs/RANDOMNESS.md, "Fuel"): the calibration
-//! bench has patterns for both (`host/blake3`, `host/beacon`).
+//! changes. Not yet measured on the floor runners (docs/RANDOMNESS.md section 2 has a local
+//! run): the calibration bench's host section has cases for all three.
 //!
 //! Storage costs cover the overlay and the host, not the node's state tree and database at
 //! commit: that's the node's to measure (PROGRAMS-PLAN.md C6).
