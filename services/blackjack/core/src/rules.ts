@@ -301,6 +301,40 @@ export function replayMoves(commit: string, clientSeed: string, gameId: bigint, 
 }
 
 /**
+ * `replay` for a hand whose player's card count is known (the program's records keep it): the
+ * player hit until they held `nPlayer` cards, then stood if the hand went on. Throws if the
+ * links, that count and the rules don't fit together.
+ */
+export function replayCounted(commit: string, clientSeed: string, gameId: bigint, links: readonly string[], nPlayer: number): Replay {
+  const hand = new Hand();
+  const cards: number[] = [];
+  let last = commit;
+  let outcome: Outcome | null = null;
+  let moves = "";
+  links.forEach((link, i) => {
+    const j = i + 1;
+    if (prevLink(link) !== last) throw new Error(`link ${j} doesn't hash to the one before it: these aren't the committed chain's links`);
+    last = link;
+    if (hand.phase === Phase.Player) {
+      if (hand.player.length < nPlayer) {
+        hand.hit();
+        moves += "H";
+      } else {
+        hand.stand();
+        moves += "S";
+      }
+    }
+    if (!dealers(hand.phase)) throw new Error(`link ${j} was revealed when the dealer owed no card`);
+    const c = card(link, clientSeed, gameId, j);
+    cards.push(c);
+    const step = hand.deal(c);
+    if (step?.kind === "settled") outcome = step.outcome;
+  });
+  if (hand.player.length !== nPlayer && !(hand.phase === Phase.Deal && nPlayer <= 2)) throw new Error(`the links deal the player ${hand.player.length} cards, not ${nPlayer}`);
+  return { cards, player: [...hand.player], dealer: [...hand.dealer], playerTotal: total(hand.player).total, dealerTotal: total(hand.dealer).total, phase: hand.phase, outcome, moves };
+}
+
+/**
  * Every link of a chain from its newest revealed one: `links[0]` is the commitment's successor
  * `s_1`, the last is `newest` (`s_count`). The program keeps only the newest link of an open
  * hand and publishes only the last one of a settled hand; the rest are its hashes.
