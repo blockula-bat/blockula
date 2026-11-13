@@ -22,6 +22,7 @@
 | [GOVERNANCE.md](GOVERNANCE.md) | Proposals and votes, the treasury, multisig accounts, switching features on |
 | [EXPLORER.md](EXPLORER.md) | The web wallet's explorer pages and how to add one for a new feature |
 | [INTEGRATION.md](INTEGRATION.md) | For apps, services and bots that hold a chain's units for others |
+| [X-LINKING.md](X-LINKING.md) | Linking an X account to a Blockula account: the proof post, the on-chain record, checking a link, unlinking |
 | [PQ-TRANSPORT.md](PQ-TRANSPORT.md) | How validators' connections are keyed post-quantum |
 | [REPLAY.md](REPLAY.md) | The v1 replay gate every change to the node passes |
 | [BUG_BOUNTY.md](BUG_BOUNTY.md) | Reporting vulnerabilities: scope, rules and safe harbor (with [SECURITY.md](../SECURITY.md)) |

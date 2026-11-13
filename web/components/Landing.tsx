@@ -8,6 +8,7 @@ import { Copy } from "@/components/ui";
 import { agentPrompt } from "@/lib/agent-prompt";
 import { DEFAULT_NETWORK, RP_ID, RPC, SERVED, walletUrl } from "@/lib/config";
 import { useNode } from "@/lib/explorer/node";
+import { X_ACCOUNT, X_URL } from "@/lib/site";
 import { useWallet } from "@/lib/wallet";
 
 export const REPO = "https://github.com/jackdishman/blockula";
@@ -141,7 +142,7 @@ export function Landing() {
       </section>
 
       <p className="dim small center">
-        Blockula isn&apos;t externally audited. <a href={REPO}>Source on GitHub</a>.
+        Blockula isn&apos;t externally audited. <a href={REPO}>Source on GitHub</a>. News: <a href={X_URL} rel="me" data-testid="x-account">@{X_ACCOUNT} on X</a>.
       </p>
     </main>
   );

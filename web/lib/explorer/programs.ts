@@ -6,12 +6,13 @@
  * onto `ActionSpec` too: typed params in, an `Action` out (docs/PROGRAMS.md section 11.3). See
  * docs/EXPLORER.md.
  */
-import type { Action } from "@blockula/sdk";
+import { X_UNLINK_MEMO, type Action } from "@blockula/sdk";
 import { BLOCKS_PER_DAY } from "../config";
 import { BOND_TERMS, CONTRIBUTION_NOTES_BOTH } from "../creators";
 import type { TermKey } from "./glossary";
 import { inertText, shortAddress } from "./inert";
 import type { DeployedProgramView } from "./types";
+import { xRecordMemo } from "./xlink";
 
 /**
  * - `account`: a `.boo` name or an address, in a field the chain resolves itself (a payment's
@@ -20,8 +21,9 @@ import type { DeployedProgramView } from "./types";
  *   can make the transaction fail but not send it elsewhere (audit gap-7-1).
  * - `validator`: a field that needs an address (staking). A name is resolved, and on mainnet an
  *   unproven one isn't signed (`UnprovenNameError`).
+ * - `x_handle`, `x_post`: an X handle and a link to a post on X (docs/X-LINKING.md).
  */
-export type ParamType = "fang" | "account" | "validator" | "name" | "int" | "years" | "bps" | "text" | "repo" | "days" | "key_id";
+export type ParamType = "fang" | "account" | "validator" | "name" | "int" | "years" | "bps" | "text" | "repo" | "days" | "key_id" | "x_handle" | "x_post";
 
 export interface Param {
   key: string;
@@ -63,6 +65,11 @@ export interface ActionSpec {
   ownerOnly: boolean;
   params: Param[];
   build(v: Values, ctx: Ctx): Action;
+  /**
+   * The transaction's memo, when the action is what its memo says (an X link's record,
+   * docs/X-LINKING.md). Without it the memo is the form's own `memo` field, if it has one.
+   */
+  memo?(v: Values, ctx: Ctx): string;
   /** The preview's first line, from the inputs as typed. */
   describe(raw: Record<string, string>): string;
 }
@@ -463,6 +470,42 @@ export const PROGRAMS: NativeProgram[] = [
 ];
 
 export const program = (id: string) => PROGRAMS.find((p) => p.id === id);
+
+/**
+ * Linking an X account (docs/X-LINKING.md, app/x): not a chain module but a convention over
+ * transfers, so these aren't in `PROGRAMS`. A record is a transfer of 0 from the account to
+ * itself whose memo says what it records; the chain sees a transfer, and readers (the SDK's
+ * `xRecordOf`) count it only when an owner key signed it.
+ */
+export const X_ACTIONS: ActionSpec[] = [
+  {
+    id: "link_x",
+    kind: "transfer",
+    title: "Record the link",
+    blurb: "Record an X handle as this account's, pointing at the post that proves it. It replaces any earlier link.",
+    who: "owner keys (an agent key's record is ignored)",
+    ownerOnly: true,
+    params: [
+      { key: "handle", label: "X handle", type: "x_handle", placeholder: "BlockulaChain" },
+      { key: "post", label: "Link to your post", type: "x_post", placeholder: "https://x.com/you/status/…", help: "The post with your code, from that handle. Public and permanent once recorded." },
+    ],
+    build: (_v, ctx) => ({ type: "transfer", to: ctx.account, amount: "0" }),
+    memo: (v) => xRecordMemo(String(v.handle), String(v.post)),
+    describe: (r) => `Record @${(r.handle || "…").trim().replace(/^@/, "")} as this account's X account`,
+  },
+  {
+    id: "unlink_x",
+    kind: "transfer",
+    title: "Unlink X",
+    blurb: "Take this account's X link away. The old records stay in its history; this one ends them.",
+    who: "owner keys",
+    ownerOnly: true,
+    params: [],
+    build: (_v, ctx) => ({ type: "transfer", to: ctx.account, amount: "0" }),
+    memo: () => X_UNLINK_MEMO,
+    describe: () => "Unlink this account's X account",
+  },
+];
 
 /** `fund_hunt(hunt_id: int, amount: fang)`: an action's signature, as an interface listing shows it. */
 export const signature = (a: ActionSpec) => `${a.kind}(${a.params.map((p) => `${p.key}${p.optional ? "?" : ""}: ${p.type}`).join(", ")})`;

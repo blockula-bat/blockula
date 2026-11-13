@@ -21,6 +21,8 @@ Blockula is an open-source project with one maintainer today. Help is best effor
 - **A question:** open an issue. GitHub Discussions will take questions once it's switched on.
 - **A vulnerability:** privately, through a [security advisory](https://github.com/jackdishman/blockula/security/advisories/new). Never in a public issue. See [SECURITY.md](SECURITY.md).
 
+- **News and releases:** [@BlockulaChain](https://x.com/BlockulaChain) on X, the project's only account there. It's for announcements: ask questions in an issue, where the answer stays findable.
+
 Is the network up? Every node answers `/api/health`, and the explorer shows the newest blocks.
 
 ## What nobody can do for you
@@ -35,5 +37,6 @@ Is the network up? Every node answers `/api/health`, and the explorer shows the 
 - Nobody from the project will message you first to offer help, and nobody will ask you to send FANG to "verify" or "unlock" anything.
 - FANG has no value, and the project sells none. Anyone offering to sell you FANG "from the team" isn't the team.
 - Use the wallet only at its real address, which the README links.
+- The project's only X account is [@BlockulaChain](https://x.com/BlockulaChain). It never asks for keys or FANG, and never sends direct messages first. A linked X handle on someone's account ([docs/X-LINKING.md](docs/X-LINKING.md)) says who they are on X, not that the project vouches for them.
 
 This repo follows a [code of conduct](CODE_OF_CONDUCT.md).

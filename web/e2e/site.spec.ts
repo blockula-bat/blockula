@@ -105,6 +105,10 @@ test("agents first: the one line, the install and the guestbook; then the demo c
   await expect(page.getByRole("link", { name: "The guide", exact: true })).toHaveAttribute("href", "https://github.com/jackdishman/blockula/blob/main/docs/CREATE.md");
   await expect(page.getByTestId("contribute-prompt")).toContainText("Contribute to Blockula (https://github.com/jackdishman/blockula). Clone it");
   await expect(page.getByRole("link", { name: "Good first issues" })).toHaveAttribute("href", "https://github.com/jackdishman/blockula/issues?q=is%3Aopen+label%3A%22good+first+issue%22");
+  // The project's one X account: in the footer, and in the nav on wide screens.
+  await expect(page.getByTestId("x-account")).toHaveText("@BlockulaChain on X");
+  await expect(page.getByTestId("x-account")).toHaveAttribute("href", "https://x.com/BlockulaChain");
+  await expect(page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: "@BlockulaChain on X" })).toHaveAttribute("href", "https://x.com/BlockulaChain");
   await expect(page.getByTestId("imprint-note")).toContainText("The coins have no value");
   await expect(page.getByTestId("imprint-note")).toContainText("for education and research only");
   await expect(page.getByTestId("imprint-terms").getByRole("link", { name: "Terms of Use" })).toHaveAttribute("href", "/terms");

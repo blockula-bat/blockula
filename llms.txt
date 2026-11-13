@@ -9,6 +9,8 @@
 - [Run a node](docs/RUN-A-NODE.md): a full node or a validator, and using your own node
 - [Plan](docs/PLAN.md): architecture, privacy (Ghost Mode), tokenomics, roadmap
 - [Security](SECURITY.md): how to report vulnerabilities
+- [Link an X account](docs/X-LINKING.md): prove an account's X handle with a public post and an on-chain record
+- Official X account: [@BlockulaChain](https://x.com/BlockulaChain) (the only one)
 
 One-pager: docs/ONE_PAGER.md · Public chain: the demo chain, https://demo.blockula.app (worthless FANG, a faucet). `blockula create` makes your own (`blockula dev` for a throwaway one) (the public testnet was retired in November 2026)
 

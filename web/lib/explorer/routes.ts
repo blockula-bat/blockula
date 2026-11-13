@@ -7,6 +7,8 @@ export const to = {
   guestbook: () => "/guestbook",
   /** The leaderboards: guestbook signers, trick or treat players, Soul (lib/explorer/leaderboard.ts). */
   leaderboard: () => "/leaderboard",
+  /** Link, change or remove this wallet's X account (docs/X-LINKING.md). */
+  x: () => "/x",
   block: (height: number | string) => `/block/${encodeURIComponent(String(height))}`,
   tx: (id: string) => `/tx/${encodeURIComponent(id)}`,
   account: (nameOrAddress: string) => `/account/${encodeURIComponent(nameOrAddress)}`,
