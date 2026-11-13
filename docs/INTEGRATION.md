@@ -84,7 +84,7 @@ Without it, scan blocks yourself: page headers with `/api/blocks?limit=100&befor
 ## Custody
 
 - **Keys.** Every signature is ML-DSA-65 (FIPS 204) over the tx's signing bytes, with an empty context. The encoding is in `sdk-ts/src/tx.ts` and `node/src/types.rs`, with shared vectors in `sdk-ts/test/tx-vectors.json`. Seeds are 32 random bytes; there's no derivation scheme yet, so back up one seed per address.
-- **Cold storage: multisig.** `multisig_create` turns an account into an M-of-N of its owner keys. Owner actions then need a proposal and approvals (`blockula multisig …` or the SDK's `multisigPropose` / `multisigApprove`), and each approval binds the exact action. Prefer it to long-lived pre-signed txs, which the one-hour validity window doesn't allow anyway.
+- **Cold storage: multisig.** `multisig_create` turns an account into an M-of-N of its owner keys. Owner actions then need a proposal and approvals (the wallet's Shared accounts pages with passkeys, `blockula multisig …`, or the SDK's `multisigPropose` / `multisigApprove`), and each approval binds the exact action. It can't be turned back into an ordinary account. Prefer it to long-lived pre-signed txs, which the one-hour validity window doesn't allow anyway.
 - **Hot wallets: session keys.** A session key can only send transfers, within a limit per period and until an expiry, all enforced by the chain. Give your hot wallet's signing service a session key on an account that an owner key (kept offline) controls, so a leaked hot key can only spend its budget.
 - **Accounts hold many keys.** Every tx names the account it acts for (`from`); the signing key must be on that account.
 
