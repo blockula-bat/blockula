@@ -15,7 +15,7 @@ export const COPY = {
   note: NOTE,
   title: "Blackjack",
   eyebrow: "program · a game played with FANG",
-  sub: "One hand against the dealer, played with FANG. Every card comes from a hash chain the dealer locked in before your bet, mixed with a seed your browser makes and keeps hidden until your bet is in. You can check each hand yourself.",
+  sub: "One hand against the dealer, played with FANG. Every card can be checked.",
   noTable: {
     title: "No table on this chain yet",
     body: "Nobody has set up a blackjack table for this wallet's chain. If someone gave you a table's address, open this page with ?table= and that address.",
@@ -29,7 +29,7 @@ export const COPY = {
   gate: {
     title: "Before you play",
     label: "I am 18 or older.",
-    why: "You can watch the table without this. Betting and moving need it. Your answer is kept in this browser only.",
+    why: "Betting and moving need this. Your answer is kept in this browser only.",
     needed: "Confirm you are 18 or older to play.",
   },
   signIn: {
@@ -42,6 +42,8 @@ export const COPY = {
     title: "Place a bet",
     label: "Your bet",
     review: "Review the bet",
+    again: "Play again",
+    againNote: (amount: string) => `Bets ${amount} again, the same as your last hand. You review it before you sign.`,
     step: "step 1 of 2",
     waiting: "Placing your bet (step 1 of 2)…",
     seedLabel: "Your seed's hash",
@@ -157,6 +159,12 @@ export const COPY = {
     description: "One hand against the dealer, played with FANG. Every card can be checked. FANG has no value and can't be bought; no prizes.",
     alt: POSTER_ALT,
     open: "Open the table",
+  },
+  details: {
+    title: "Fairness & details",
+    hint: "The rules, why the cards are fair, and how to check a hand.",
+    lede: "One hand against the dealer, played with FANG. Every card comes from a hash chain the dealer locked in before your bet, mixed with a seed your browser makes and keeps hidden until your bet is in. You can check each hand yourself.",
+    table: "The table",
   },
   log: { title: "This hand's log", empty: "Nothing yet." },
   nav: { title: "Blackjack", tag: "program · game", blurb: "One hand against the dealer, played with FANG. Every card can be checked." },

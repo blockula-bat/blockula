@@ -12,6 +12,11 @@
 // reveals the cards: this page only waits, shows the deadline, and offers the claim when the dealer
 // misses it. Everything on the table is read from the program's stored records, and every card can
 // be recomputed here ("Check this hand").
+//
+// The cards lead: the table, the hand (open, or the last one settled), its status and the buttons
+// that act on it, with "Play again" once a hand is settled. The rules, the fairness notes, the
+// check, the log, the table's record and the table balance sit under one closed "Fairness &
+// details".
 import "@/app/explorer.css";
 import "./blackjack.css";
 import { Phase, call, eventNamed, eventsOf, fang, outcomeWords, seedHash, snapshotOfGame, snapshotOfSettled, type Game, type LastHand, type TableEvent } from "@blockula/blackjack";
@@ -23,12 +28,13 @@ import { CallerNote, useTableSigner, type CallRequest, type TableSigner } from "
 import { TableFigure } from "@/components/blackjack/TableFigure";
 import { useTable, type TableState } from "@/components/blackjack/useTable";
 import { VerifyView } from "@/components/blackjack/Verify";
-import { Section, Stat } from "@/components/explorer/kit";
+import { Stat } from "@/components/explorer/kit";
 import { Spinner } from "@/components/ui";
 import {
   ADULT_KEY,
   addHandTx,
   betProblem,
+  betPrefill,
   bindBet,
   checkOpenHand,
   checkSettledHand,
@@ -44,6 +50,7 @@ import {
   noteRevealTx,
   parseAmount,
   payoutWords,
+  playAgain,
   rememberSeed,
   seatOf,
   storeKey,
@@ -270,73 +277,89 @@ function TablePage({ address }: { address: string }) {
   const ctx: BetContext | null = s.player ? { limits: s.limits, house: s.house, player: s.player, height, commitmentReady: s.commitmentReady, transferable } : null;
   const canSign = signer.caller.kind === "owner";
 
+  const most = maxBetNow(s.limits, s.house);
+
   return (
     <>
-      <div className="figures" data-testid="bj-house">
-        <Stat v={fang(s.house.bankroll)} k="FANG in the house's bankroll" />
-        <Stat v={`${s.house.open} of ${s.limits.maxOpenGames}`} k="hands open" />
-        <Stat v={`${fang(s.limits.minBet)} to ${fang(maxBetNow(s.limits, s.house) < s.limits.minBet ? s.limits.maxBet : maxBetNow(s.limits, s.house))}`} k="FANG a bet, right now" />
-        <Stat v={s.house.paused ? "paused" : "open"} k="new bets" />
-      </div>
-      <p className="card-note m0" data-testid="bj-table">
-        The table is the program <span className="mono break">{address}</span>. <Link href={to.deployed(address)}>See the program&apos;s record</Link>
-        {signer.infoError && <span className="warn block">{signer.infoError}</span>}
-      </p>
-
-      <div className="cols">
-        <div className="stack-lg">
-          <Section title={COPY.hand.title} aside={open ? <span className="dim small">hand {open.id.toString()}</span> : undefined}>
-            {!me ? (
-              <CallerNote signer={signer} />
-            ) : seat?.state === "settling" ? (
-              <Spinner>{COPY.hand.settling}</Spinner>
-            ) : open ? (
-              <OpenHand game={open} me={me} myName={myName} height={height} blockMs={blockMs} adult={adult} signer={signer} kept={openKept} storeKey={key} touch={touch} tick={s} program={address} reveal={reveal} />
-            ) : (
-              <>
-                <p className="m0 dim" data-testid="bj-no-hand">{COPY.hand.none}</p>
-                {ctx && <BetForm ctx={ctx} me={me} adult={adult} signer={signer} storeKey={key} touch={touch} canSign={canSign} />}
-              </>
-            )}
-            {!open && signer.panel}
-          </Section>
-
-          <Section title={COPY.hand.lastTitle} aside={last ? <span className="dim small">hand {last.game.toString()}</span> : undefined}>
-            {last ? <LastHandView last={last} kept={lastKept} myName={myName} me={me} /> : <p className="m0 dim" data-testid="bj-no-last">{me ? COPY.hand.noLast : COPY.signIn.none}</p>}
-          </Section>
-
-          {me && s.player && <BalancePanel state={s} signer={signer} adult={adult} height={height} prefix={client.pin.prefix} />}
+      {signer.infoError && (
+        <p className="warn m0" role="alert" data-testid="bj-info-error">
+          {signer.infoError}
+        </p>
+      )}
+      <section className="card bj-play" data-testid="bj-play">
+        <div className="card-head">
+          <h2>{!open && last && me ? COPY.hand.lastTitle : COPY.hand.title}</h2>
+          {me && (open || last) && <span className="dim small">hand {(open ? open.id : last!.game).toString()}</span>}
         </div>
-
-        <div className="stack-lg">
-          <Section title={COPY.gate.title}>
+        {!me ? (
+          <CallerNote signer={signer} />
+        ) : seat?.state === "settling" ? (
+          <Spinner>{COPY.hand.settling}</Spinner>
+        ) : open ? (
+          <OpenHand game={open} me={me} myName={myName} height={height} blockMs={blockMs} adult={adult} signer={signer} kept={openKept} storeKey={key} touch={touch} reveal={reveal} />
+        ) : (
+          <>
+            <div className={last ? "cols bj-hand" : "bj-hand"}>
+              {last && <LastHandView last={last} kept={lastKept} myName={myName} me={me} />}
+              <div className="stack">
+                {!last && <p className="m0 dim" data-testid="bj-no-hand">{COPY.hand.none}</p>}
+                {/* A new form for each settled hand: it starts from that hand's stake. */}
+                {ctx && <BetForm key={last ? last.game.toString() : "first"} ctx={ctx} me={me} adult={adult} signer={signer} storeKey={key} touch={touch} canSign={canSign} last={last} />}
+              </div>
+            </div>
+            {signer.panel}
+          </>
+        )}
+        {me && (
+          <div className="bj-gate-row">
             <label className="bj-gate" data-testid="bj-gate">
               <input type="checkbox" checked={adult} onChange={(e) => setAdult(e.target.checked)} />
               <span>{COPY.gate.label}</span>
             </label>
-            <p className="card-note">{COPY.gate.why}</p>
-            {wallet && me && s.player && (
-              <p className="card-note" data-testid="bj-daily">
+            <span className="dim small">{COPY.gate.why}</span>
+            {wallet && s.player && (
+              <span className="dim small" data-testid="bj-daily">
                 Left to bet today: {fangText(dailyLeft(s.limits, s.player, height))}.
-              </p>
+              </span>
             )}
-          </Section>
-          <Section title="The rules">
-            <div className="stack" data-testid="bj-rules">
-              {rulesText(s.limits, blockMs).map((r) => (
-                <div key={r.title}>
-                  <h3 className="bj-rule">{r.title}</h3>
-                  {r.body.map((p, i) => (
-                    <p key={i} className="bj-rule-p">
-                      {p}
-                    </p>
-                  ))}
-                </div>
-              ))}
+          </div>
+        )}
+      </section>
+
+      <details className="card bj-more" data-testid="bj-details">
+        <summary className="bj-summary" data-testid="bj-details-summary">
+          {COPY.details.title} <span className="dim small bj-summary-hint">{COPY.details.hint}</span>
+        </summary>
+        <div className="stack-lg bj-more-body">
+          <p className="m0 dim">{COPY.details.lede}</p>
+          {me && open ? <OpenHandDetails game={open} me={me} kept={openKept} tick={s} program={address} /> : me && last ? <LastHandDetails last={last} kept={lastKept} me={me} /> : null}
+          <div className="stack">
+            <h3 className="bj-rule">{COPY.details.table}</h3>
+            <div className="figures" data-testid="bj-house">
+              <Stat v={fang(s.house.bankroll)} k="FANG in the house's bankroll" />
+              <Stat v={`${s.house.open} of ${s.limits.maxOpenGames}`} k="hands open" />
+              <Stat v={`${fang(s.limits.minBet)} to ${fang(most < s.limits.minBet ? s.limits.maxBet : most)}`} k="FANG a bet, right now" />
+              <Stat v={s.house.paused ? "paused" : "open"} k="new bets" />
             </div>
-          </Section>
+            <p className="card-note m0" data-testid="bj-table">
+              The table is the program <span className="mono break">{address}</span>. <Link href={to.deployed(address)}>See the program&apos;s record</Link>
+            </p>
+          </div>
+          <div className="stack" data-testid="bj-rules">
+            {rulesText(s.limits, blockMs).map((r) => (
+              <div key={r.title}>
+                <h3 className="bj-rule">{r.title}</h3>
+                {r.body.map((p, i) => (
+                  <p key={i} className="bj-rule-p">
+                    {p}
+                  </p>
+                ))}
+              </div>
+            ))}
+          </div>
+          {me && s.player && <BalancePanel state={s} signer={signer} adult={adult} height={height} prefix={client.pin.prefix} />}
         </div>
-      </div>
+      </details>
     </>
   );
 }
@@ -370,16 +393,25 @@ function revealRequest(game: bigint, seed: string, key: string, touch: () => voi
   };
 }
 
-function BetForm({ ctx, me, adult, signer, storeKey: key, touch, canSign }: { ctx: BetContext; me: string; adult: boolean; signer: TableSigner; storeKey: string; touch: () => void; canSign: boolean }) {
-  const [raw, setRaw] = useState("");
-  const [touched, setTouched] = useState(false);
+function BetForm({ ctx, me, adult, signer, storeKey: key, touch, canSign, last }: { ctx: BetContext; me: string; adult: boolean; signer: TableSigner; storeKey: string; touch: () => void; canSign: boolean; last: LastHand | null }) {
+  // The field starts from the last hand's stake. An amount the table no longer takes says so at once.
+  const [raw, setRaw] = useState(() => betPrefill(last));
+  const [touched, setTouched] = useState(() => !!last && betProblem(betPrefill(last), ctx) !== null);
   const blocked = tableProblem(ctx);
   const problem = betProblem(raw, ctx);
   const most = maxBetNow(ctx.limits, ctx.house);
-  const review = () => {
+  // "Play again": the last stake goes in the field and through the same checks and the same review.
+  const again = () => {
+    if (!last) return;
+    const next = playAgain(last, ctx);
+    setRaw(next.amount);
+    place(next.amount);
+  };
+  const review = () => place(raw);
+  const place = (amount: string) => {
     setTouched(true);
-    const stake = parseAmount(raw);
-    if (problem || stake === null || !adult) return;
+    const stake = parseAmount(amount);
+    if (betProblem(amount, ctx) || stake === null || !adult) return;
     // A new seed for every bet, kept in this browser before anything is signed: the bet sends
     // only its hash, and the seed must still be here to be revealed once the bet is in a block.
     const seed = newSeed();
@@ -412,7 +444,15 @@ function BetForm({ ctx, me, adult, signer, storeKey: key, touch, canSign }: { ct
   };
   return (
     <div className="stack" data-testid="bj-bet-form">
-      <h3 className="bj-rule">{COPY.bet.title}</h3>
+      {last && (
+        <div className="stack bj-again">
+          <button className="btn primary big self-start" disabled={!!blocked || !adult || !canSign || signer.active} onClick={again} data-testid="bj-play-again">
+            {COPY.bet.again}
+          </button>
+          {!blocked && <span className="dim small" data-testid="bj-play-again-note">{COPY.bet.againNote(fangText(last.stake))}</span>}
+        </div>
+      )}
+      {!last && <h3 className="bj-rule">{COPY.bet.title}</h3>}
       {blocked ? (
         <p className="warn m0" data-testid="bj-bet-blocked">{blocked}</p>
       ) : (
@@ -431,27 +471,26 @@ function BetForm({ ctx, me, adult, signer, storeKey: key, touch, canSign }: { ct
               </span>
             )}
           </label>
-          <span className="dim small" data-testid="bj-bet-two">{COPY.bet.two}</span>
-          <span className="dim small">{COPY.bet.deposit}</span>
           {!adult && <span className="warn small" data-testid="bj-gate-needed">{COPY.gate.needed}</span>}
           {canSign ? (
-            <button className="btn primary self-start" disabled={!adult || signer.active} onClick={review} data-testid="bj-bet-review">
+            <button className={`btn self-start${last ? "" : " primary"}`} disabled={!adult || signer.active} onClick={review} data-testid="bj-bet-review">
               {COPY.bet.review}
             </button>
           ) : (
             <CallerNote signer={signer} />
           )}
+          <span className="dim small">
+            <span data-testid="bj-bet-two">{COPY.bet.two}</span> {COPY.bet.deposit}
+          </span>
         </>
       )}
     </div>
   );
 }
 
-function OpenHand({ game, me, myName, height, blockMs, adult, signer, kept, storeKey: key, touch, tick, program, reveal }: { game: Game; me: string; myName?: string; height: number; blockMs: number; adult: boolean; signer: TableSigner; kept: StoredHand | null; storeKey: string; touch: () => void; tick: unknown; program: string; reveal: () => void }) {
-  const [checking, setChecking] = useState(false);
+function OpenHand({ game, me, myName, height, blockMs, adult, signer, kept, storeKey: key, touch, reveal }: { game: Game; me: string; myName?: string; height: number; blockMs: number; adult: boolean; signer: TableSigner; kept: StoredHand | null; storeKey: string; touch: () => void; reveal: () => void }) {
   const hs = handState(game, me, height, blockMs);
   const snapshot = useMemo(() => snapshotOfGame(game, { player: myName, txId: kept?.betTx }), [game, myName, kept?.betTx]);
-  const events = useHandEvents(program, kept?.txs ?? [], tick);
   const canSign = signer.caller.kind === "owner";
   const move = (what: "hit" | "stand" | "timeout", does: string) =>
     void signer.start({
@@ -463,7 +502,9 @@ function OpenHand({ game, me, myName, height, blockMs, adult, signer, kept, stor
   const seedStep = hs.waitsFor === "seed" && hs.mine;
   return (
     <div className="stack" data-testid="bj-open-hand">
+      <div className="cols bj-hand">
       <TableFigure snapshot={snapshot} mine={hs.mine} />
+      <div className="stack">
       <p className="m0 bj-status" role="status" data-testid="bj-status">
         {hs.words}
       </p>
@@ -530,14 +571,26 @@ function OpenHand({ game, me, myName, height, blockMs, adult, signer, kept, stor
       )}
       {(hs.canMove || hs.canClaim) && !adult && <span className="warn small" data-testid="bj-gate-needed">{COPY.gate.needed}</span>}
       {(hs.canMove || hs.canClaim) && !canSign && <CallerNote signer={signer} />}
+      </div>
+      </div>
       {signer.panel}
+    </div>
+  );
+}
+
+/** The open hand's check and its log, for "Fairness & details". */
+function OpenHandDetails({ game, me, kept, tick, program }: { game: Game; me: string; kept: StoredHand | null; tick: unknown; program: string }) {
+  const [checking, setChecking] = useState(false);
+  const events = useHandEvents(program, kept?.txs ?? [], tick);
+  return (
+    <div className="stack" data-testid="bj-hand-details">
       <div className="row-gap">
         <button className="btn small" onClick={() => setChecking((c) => !c)} data-testid="bj-check-open" aria-expanded={checking}>
           {COPY.verify.title}
         </button>
         <span className="dim small">{COPY.verify.lede}</span>
       </div>
-      {checking && <VerifyView check={checkOpenHand(game, kept)} mine={hs.mine} />}
+      {checking && <VerifyView check={checkOpenHand(game, kept)} mine={game.player === me} />}
       <div data-testid="bj-log">
         <h3 className="bj-rule">{COPY.log.title}</h3>
         {events.length === 0 ? (
@@ -555,17 +608,27 @@ function OpenHand({ game, me, myName, height, blockMs, adult, signer, kept, stor
   );
 }
 
+/** The last hand on the table: its cards and how it ended. */
 function LastHandView({ last, kept, myName, me }: { last: LastHand; kept: StoredHand | null; myName?: string; me: string | null }) {
-  const [checking, setChecking] = useState(false);
   // The record keeps no cards: they are recomputed here, which is the check itself.
   const check = useMemo(() => checkSettledHand(last, kept, me ?? undefined), [last, kept, me]);
   const snapshot = useMemo(() => (check.ok ? snapshotOfSettled(last, { player: check.player, dealer: check.dealer }, { player: myName, txId: kept?.betTx }) : null), [check, last, myName, kept?.betTx]);
   return (
     <div className="stack" data-testid="bj-last-hand">
       {snapshot ? <TableFigure snapshot={snapshot} mine /> : <p className="warn m0">{check.verdict}</p>}
-      <p className="m0 bj-status" data-testid="bj-last-outcome">
+      <p className="m0 bj-status" role="status" data-testid="bj-last-outcome">
         {outcomeWords(last.outcome)}. {payoutWords(last.stake, last.payout)}
       </p>
+    </div>
+  );
+}
+
+/** The last hand's check, for "Fairness & details". */
+function LastHandDetails({ last, kept, me }: { last: LastHand; kept: StoredHand | null; me: string | null }) {
+  const [checking, setChecking] = useState(false);
+  const check = useMemo(() => checkSettledHand(last, kept, me ?? undefined), [last, kept, me]);
+  return (
+    <div className="stack" data-testid="bj-hand-details">
       <div className="row-gap">
         <button className="btn small" onClick={() => setChecking((c) => !c)} data-testid="bj-check-last" aria-expanded={checking}>
           {COPY.verify.title}
@@ -669,7 +732,7 @@ function BalancePanel({ state, signer, adult, height, prefix }: { state: TableSt
           </div>
           {said && <p className="warn small m0" role="alert">{said}</p>}
           {!canSign && <CallerNote signer={signer} />}
-          <p className="card-note">A review of each of these appears under your hand, above.</p>
+          <p className="card-note">A review of each of these appears with your hand, at the top of the page.</p>
         </div>
       </details>
     </section>

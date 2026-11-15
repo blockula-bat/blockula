@@ -18,6 +18,14 @@
 .bj-gate input { width: 20px; height: 20px; accent-color: var(--blood); }
 .bj-summary { cursor: pointer; font: 400 21px var(--display); }
 .bj-balance-body { padding-top: 12px; }
+/* The hand and what acts on it, side by side: the cards lead the page. */
+.bj-hand { margin-bottom: 4px; }
+.bj-again .btn.big { min-width: 0; }
+.bj-gate-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--hair); }
+/* Everything that explains and verifies, closed until asked for. */
+.bj-more > summary { list-style-position: outside; }
+.bj-summary-hint { margin-left: 8px; font: 400 16px/1.4 var(--serif); }
+.bj-more-body { padding-top: 16px; }
 .bj-poster { display: block; width: 100%; height: auto; border: 1.5px solid var(--ink); }
 
 /* The spectator view (app/blackjack/embed): the table and nothing of the wallet around it. */

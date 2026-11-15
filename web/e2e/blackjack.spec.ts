@@ -3,7 +3,8 @@
 // spec drives with real hash chains): the 18+ gate, a bet in its two transactions through the
 // wallet's review-then-sign flow (the bet with the seed's hash, then the seed's reveal, which the
 // page presents by itself, again after a reload, and never when the seed isn't in this browser),
-// a seed that isn't revealed in time, the deal, a hit and a stand, the settlement, "Check this hand" verifying every card in the
+// a seed that isn't revealed in time, the deal, a hit and a stand, the settlement, "Play again" with the last stake,
+// the rules and the check under "Fairness & details" (closed until opened), "Check this hand" verifying every card in the
 // browser, the dealer's missed deadline and the claim, the note on every page, the spectator view
 // and who may frame it, and the share page's card. All under the production build's strict CSP.
 import { POSTER_ALT, Outcome, Phase, call, cardLabel, outcomeWords, seedHash, total } from "@blockula/blackjack";
@@ -50,6 +51,15 @@ const STORE = `blockula.blackjack.blockula-testnet.${TABLE}`;
 const VERIFIED = "Verified. Every card comes from the dealer's commitment and your seed. The seed is the one the bet committed to.";
 const STEP_2 = /^Reveal your seed for hand 0 \(step 2 of 2\)$/;
 
+/** "Fairness & details": the rules, the check, the log, the table's record. Closed on every load; opened here. */
+async function openDetails(page: Page) {
+  const details = page.getByTestId("bj-details");
+  await expect(details).toBeVisible();
+  if (!(await details.evaluate((d) => (d as HTMLDetailsElement).open))) await details.getByTestId("bj-details-summary").click();
+  await expect(details).toHaveAttribute("open", "");
+  return details;
+}
+
 /** What this browser keeps for the table: the seeds it made, by hand. */
 const kept = (page: Page) => page.evaluate((k) => JSON.parse(localStorage.getItem(k) ?? "null") as { pending: { seed: string; seedHash?: string }[]; hands: Record<string, { seed: string; seedHash?: string; commit?: string; game?: string; txs: string[] }> } | null, STORE);
 
@@ -90,12 +100,21 @@ test.describe("the blackjack table", () => {
     table.script = HIT_THEN_STAND;
     await page.goto(`/blackjack?table=${TABLE}`);
 
-    // The note, the rules with the chain's limits, and which program the table is.
+    // The page leads with the game: the note and the hand. The rules, the table's record and the
+    // check are under "Fairness & details", closed until it's opened.
     await expect(page.getByTestId("bj-note")).toHaveText(NOTE);
+    await expect(page.getByTestId("bj-bet-form")).toBeVisible();
+    await expect(page.getByTestId("bj-play-again")).toHaveCount(0);
+    await expect(page.getByTestId("bj-details")).not.toHaveAttribute("open", "");
+    await expect(page.getByTestId("bj-rules")).toBeHidden();
+    await expect(page.getByTestId("bj-table")).toBeHidden();
+    const details = await openDetails(page);
+    await expect(details.getByTestId("bj-rules")).toBeVisible();
     await expect(page.getByTestId("bj-table")).toContainText(TABLE);
     await expect(page.getByTestId("bj-table").getByRole("link", { name: "See the program's record" })).toHaveAttribute("href", `/program/${TABLE}`);
     const rules = page.getByTestId("bj-rules");
     await expect(rules).toContainText("This is a game played with FANG.");
+    await expect(rules).toContainText("Why the cards are fair");
     await expect(rules).toContainText("A bet is from 1 FANG to 50 FANG, and never more than 1/20 of the house's free bankroll.");
     await expect(rules).toContainText("You have 1,800 blocks (about 30 min) to move.");
     await expect(rules).toContainText("you have 300 blocks (about 5 min) to reveal your seed.");
@@ -176,9 +195,9 @@ test.describe("the blackjack table", () => {
     // The seed is in: the hand waits for the dealer, with its deadline in blocks.
     await expect(hand.getByTestId("bj-status")).toContainText("Seed revealed. Waiting for the dealer…");
     await expect(hand.getByTestId("bj-seed-step")).toHaveCount(0);
-    await expect(hand.getByTestId("bj-log")).toContainText("You revealed your seed.");
+    await expect(details.getByTestId("bj-log")).toContainText("You revealed your seed.");
     await expect(hand.getByTestId("bj-status")).toContainText(/It has \d+ blocks \(about \d+ min\) left to reveal the deal/);
-    await expect(hand.getByTestId("bj-log")).toContainText("You bet 2 FANG. Hand 0.");
+    await expect(details.getByTestId("bj-log")).toContainText("You bet 2 FANG. Hand 0.");
     await expect(hand.getByTestId("bj-hit")).toHaveCount(0);
     const game = table.openHand(me);
     expect(game.clientSeed).toBe(seed);
@@ -196,8 +215,8 @@ test.describe("the blackjack table", () => {
     await expect(svg).toHaveAttribute("role", "img");
 
     // Mid-hand, the check already holds: the cards so far, down to the commitment the bet took.
-    await hand.getByTestId("bj-check-open").click();
-    const verify = hand.getByTestId("bj-verify");
+    await details.getByTestId("bj-check-open").click();
+    const verify = details.getByTestId("bj-verify");
     await expect(verify.getByTestId("bj-verdict")).toHaveText(VERIFIED);
     await expect(verify.getByTestId("bj-verify-seed-hash")).toHaveText(hash);
     await expect(verify.getByTestId("bj-verify-seed-check")).toHaveText("The bet carried this hash, and the seed above is the one that opens it.");
@@ -206,7 +225,7 @@ test.describe("the blackjack table", () => {
     await expect(verify.getByTestId("bj-verify-seed")).toHaveText(seed);
     await expect(verify.getByTestId("bj-verify-steps").locator("li")).toHaveCount(3);
     await expect(verify.getByTestId("bj-verify-outcome")).toContainText("isn't settled yet");
-    await hand.getByTestId("bj-check-open").click();
+    await details.getByTestId("bj-check-open").click();
 
     // Hit: reviewed and signed like the bet, then the dealer's card.
     await hand.getByTestId("bj-hit").click();
@@ -218,7 +237,7 @@ test.describe("the blackjack table", () => {
     expect(table.deal(game.id)).toBeNull();
     expect(game.playerCards).toHaveLength(3);
     await expect(hand.getByTestId("bj-player-cards")).toContainText(`${cards(game.playerCards)} (${total(game.playerCards).soft ? "soft " : ""}${total(game.playerCards).total})`);
-    await expect(hand.getByTestId("bj-log")).toContainText("You hit.");
+    await expect(details.getByTestId("bj-log")).toContainText("You hit.");
 
     // Stand: the dealer plays its hand out and the hand is settled.
     await hand.getByTestId("bj-stand").click();
@@ -231,12 +250,13 @@ test.describe("the blackjack table", () => {
     const came = settled.payout === 0n ? "Nothing came back from the 2 FANG bet." : settled.payout === 2n * F ? "The 2 FANG bet came back." : "4 FANG came back from a 2 FANG bet.";
     await expect(last.getByTestId("bj-last-outcome")).toHaveText(`${outcomeWords(outcome)}. ${came}`);
     await expect(page.getByTestId("bj-open-hand")).toHaveCount(0);
-    await expect(page.getByTestId("bj-no-hand")).toBeVisible();
+    // The settled hand's cards and outcome stay on the table, with "Play again" beside them.
+    await expect(page.getByTestId("bj-play").getByTestId("bj-play-again")).toBeVisible();
     await expect(last.getByTestId("bj-svg")).toHaveAttribute("aria-label", new RegExp(`${outcomeWords(outcome)}\\.`));
 
     // "Check this hand": every link, the card it gives, both hands, the outcome and what came back, with the verdict.
-    await last.getByTestId("bj-check-last").click();
-    const checked = last.getByTestId("bj-verify");
+    await details.getByTestId("bj-check-last").click();
+    const checked = details.getByTestId("bj-verify");
     await expect(checked).toHaveAttribute("data-ok", "yes");
     await expect(checked.getByTestId("bj-verdict")).toHaveText(VERIFIED);
     await expect(checked.getByTestId("bj-verify-seed-check")).toHaveText("The bet carried this hash, and the seed above is the one that opens it.");
@@ -265,8 +285,96 @@ test.describe("the blackjack table", () => {
     table.seat(me).last = settled;
     await expect(checked).toHaveAttribute("data-ok", "yes");
 
-    // The bet form is back, and a new bet gets a new seed.
+    // The bet form is back, starting from the last stake, and a new bet gets a new seed.
     await expect(page.getByTestId("bj-bet-form").getByTestId("bj-bet-range")).toContainText("498 FANG left today");
+    await expect(page.getByTestId("bj-bet-input")).toHaveValue("2");
+    await clean(page, errors);
+  });
+
+  test("play again: after a settled hand it bets the last stake through the same review, is gone while a hand is open, and never bets an amount the table no longer takes", async ({ page, node }) => {
+    test.setTimeout(120_000);
+    const { account: me } = await createWallet(page);
+    const table = addTable(node);
+    table.script = PLAYERS_TURN;
+    await page.goto(`/blackjack?table=${TABLE}`);
+    await page.getByTestId("bj-bet-form").getByRole("button", { name: "Unlock" }).click();
+    await page.getByTestId("bj-gate").getByRole("checkbox").check();
+    const again = page.getByTestId("bj-play-again");
+    // No settled hand yet: nothing to play again, and the bet field is empty.
+    await expect(again).toHaveCount(0);
+    await expect(page.getByTestId("bj-bet-input")).toHaveValue("");
+    const first = await bet(page, table, "3");
+
+    // A hand is open: no "Play again", through the deal and the player's turn.
+    const hand = page.getByTestId("bj-open-hand");
+    await expect(hand.getByTestId("bj-status")).toContainText("Seed revealed. Waiting for the dealer…");
+    await expect(again).toHaveCount(0);
+    expect(table.deal(0n)).toBeNull();
+    await expect(hand.getByTestId("bj-status")).toContainText("Your move: hit or stand.");
+    await expect(again).toHaveCount(0);
+    await hand.getByTestId("bj-stand").click();
+    await sign(page, /^Stand: take no more cards and let the dealer play \(hand 0\)$/);
+    await expect(again).toHaveCount(0);
+    expect(table.deal(0n)).not.toBeNull();
+
+    // Settled: the last hand's cards and outcome, and "Play again" with them, in the game's own card.
+    const play = page.getByTestId("bj-play");
+    await expect(play.getByTestId("bj-last-hand").getByTestId("bj-last-outcome")).toContainText("3 FANG bet");
+    await expect(play.getByTestId("bj-last-hand").getByTestId("bj-svg").locator("svg")).toBeVisible();
+    await expect(again).toBeVisible();
+    await expect(again).toHaveText("Play again");
+    await expect(again).toBeEnabled();
+    await expect(play.getByTestId("bj-play-again-note")).toHaveText("Bets 3 FANG again, the same as your last hand. You review it before you sign.");
+    await expect(page.getByTestId("bj-bet-input")).toHaveValue("3");
+    await expect(page.getByTestId("bj-details")).not.toHaveAttribute("open", "");
+
+    // The 18+ gate holds it, like every bet.
+    await page.getByTestId("bj-gate").getByRole("checkbox").uncheck();
+    await expect(again).toBeDisabled();
+    await expect(page.getByTestId("bj-gate-needed")).toHaveText("Confirm you are 18 or older to play.");
+    await page.getByTestId("bj-gate").getByRole("checkbox").check();
+
+    // One click: the same review as a bet, for the last stake, with a new seed. Nothing is signed by the click.
+    const before = node.submitted.length;
+    await again.click();
+    const review = page.getByTestId("bj-review");
+    await expect(review.getByTestId("bj-review-does")).toHaveText(/^Bet 3 FANG on a new hand \(step 1 of 2\)$/);
+    await expect(review.getByTestId("bj-review-value")).toContainText("3");
+    expect(node.submitted).toHaveLength(before);
+    const seed = (await kept(page))!.pending.at(-1)!.seed;
+    expect(seed).not.toBe(first);
+    await expect(review.getByTestId("bj-review-seed-hash")).toHaveText(seedHash(me, seed));
+    table.knownSeeds.push(seed);
+    await review.getByTestId("bj-sign").click();
+    await expect(review.getByTestId("bj-review-does")).toHaveText(/^Reveal your seed for hand 1 \(step 2 of 2\)$/);
+    expect((node.submitted.at(-1) as Tx).action).toMatchObject({ type: "call_program", calls: [{ program: TABLE, method: "bet", input: seedHash(me, seed), value: (3n * F).toString(), version_digest: table.digest }] });
+    // The new hand is open: "Play again" is gone.
+    await expect(page.getByTestId("bj-open-hand")).toBeVisible();
+    await expect(again).toHaveCount(0);
+    await sign(page, /^Reveal your seed for hand 1 \(step 2 of 2\)$/);
+    expect(table.deal(1n)).toBeNull();
+    await page.getByTestId("bj-open-hand").getByTestId("bj-stand").click();
+    await sign(page, /^Stand: take no more cards and let the dealer play \(hand 1\)$/);
+    expect(table.deal(1n)).not.toBeNull();
+    await expect(again).toBeVisible();
+
+    // The table's largest bet drops under the last stake: the field still starts from it, the form
+    // says why it can't be bet, and "Play again" places nothing.
+    table.limits = { ...table.limits, maxBet: 2n * F };
+    await page.reload();
+    await page.getByTestId("bj-bet-form").getByRole("button", { name: "Unlock" }).click();
+    await expect(page.getByTestId("bj-bet-input")).toHaveValue("3");
+    await expect(page.getByTestId("bj-bet-problem")).toHaveText("The largest bet right now is 2 FANG.");
+    const sent = node.submitted.length;
+    await again.click();
+    await expect(page.getByTestId("bj-bet-problem")).toHaveText("The largest bet right now is 2 FANG.");
+    await expect(page.getByTestId("bj-review")).toHaveCount(0);
+    expect(node.submitted).toHaveLength(sent);
+    expect((await kept(page))!.pending).toEqual([]);
+    // Edited to an amount the table takes, the ordinary button bets it.
+    await page.getByTestId("bj-bet-input").fill("2");
+    await page.getByTestId("bj-bet-review").click();
+    await expect(page.getByTestId("bj-review-does")).toHaveText(/^Bet 2 FANG on a new hand \(step 1 of 2\)$/);
     await clean(page, errors);
   });
 
@@ -296,9 +404,10 @@ test.describe("the blackjack table", () => {
 
     const last = page.getByTestId("bj-last-hand");
     await expect(last.getByTestId("bj-last-outcome")).toHaveText("You win: the dealer never dealt. 5 FANG came back from a 2 FANG bet.");
-    await last.getByTestId("bj-check-last").click();
-    await expect(last.getByTestId("bj-verdict")).toHaveText(VERIFIED);
-    await expect(last.getByTestId("bj-verify-outcome")).toContainText("the hand ended by timeout, not by the cards");
+    const details = await openDetails(page);
+    await details.getByTestId("bj-check-last").click();
+    await expect(details.getByTestId("bj-verdict")).toHaveText(VERIFIED);
+    await expect(details.getByTestId("bj-verify-outcome")).toContainText("the hand ended by timeout, not by the cards");
     await clean(page, errors);
   });
 
@@ -339,8 +448,9 @@ test.describe("the blackjack table", () => {
     // The hand plays on, and checks down to the commitment and the hash the bet carried.
     expect(table.deal(game.id)).toBeNull();
     await expect(hand.getByTestId("bj-status")).toContainText("Your move: hit or stand.");
-    await hand.getByTestId("bj-check-open").click();
-    await expect(hand.getByTestId("bj-verdict")).toHaveText(VERIFIED);
+    const details = await openDetails(page);
+    await details.getByTestId("bj-check-open").click();
+    await expect(details.getByTestId("bj-verdict")).toHaveText(VERIFIED);
     expect((await kept(page))!.hands["0"]).toMatchObject({ seed, seedHash: seedHash(me, seed), commit: table.chains.get(0n)![0] });
     await clean(page, errors);
   });
@@ -420,9 +530,10 @@ test.describe("the blackjack table", () => {
     await page.waitForTimeout(5000);
     await expect(page.getByTestId("bj-review")).toHaveCount(0);
     expect(node.submitted).toHaveLength(1);
-    await hand.getByTestId("bj-check-open").click();
-    await expect(hand.getByTestId("bj-verdict")).toContainText("Nothing to check yet. No card is dealt until the seed is revealed.");
-    await expect(hand.getByTestId("bj-verify-seed")).toHaveText("Not revealed.");
+    const details = await openDetails(page);
+    await details.getByTestId("bj-check-open").click();
+    await expect(details.getByTestId("bj-verdict")).toContainText("Nothing to check yet. No card is dealt until the seed is revealed.");
+    await expect(details.getByTestId("bj-verify-seed")).toHaveText("Not revealed.");
 
     // The seed's 300 blocks pass: the bet is the house's, and anyone can end the hand.
     node.height += 400;
@@ -441,10 +552,10 @@ test.describe("the blackjack table", () => {
     expect(table.house.bankroll).toBe(2002n * F);
     const last = page.getByTestId("bj-last-hand");
     await expect(last.getByTestId("bj-last-outcome")).toHaveText("The bet is the house's: its seed was never revealed. Nothing came back from the 2 FANG bet.");
-    await expect(page.getByTestId("bj-no-hand")).toBeVisible();
-    await last.getByTestId("bj-check-last").click();
-    await expect(last.getByTestId("bj-verdict")).toHaveText("Verified. No cards were dealt: the seed was never revealed, so the bet went to the house.");
-    await expect(last.getByTestId("bj-verify-seed-check")).toHaveText("What the bet committed to. The seed that opens it was not revealed.");
+    await expect(page.getByTestId("bj-play-again")).toBeVisible();
+    await details.getByTestId("bj-check-last").click();
+    await expect(details.getByTestId("bj-verdict")).toHaveText("Verified. No cards were dealt: the seed was never revealed, so the bet went to the house.");
+    await expect(details.getByTestId("bj-verify-seed-check")).toHaveText("What the bet committed to. The seed that opens it was not revealed.");
     await clean(page, errors);
   });
 
@@ -482,8 +593,9 @@ test.describe("the blackjack table", () => {
     const last = page.getByTestId("bj-last-hand");
     await expect(last.getByTestId("bj-last-outcome")).toHaveText("The bet is the house's: its seed was never revealed. Nothing came back from the 2 FANG bet.");
     await expect(last.getByTestId("bj-svg")).toHaveAttribute("aria-label", /The bet is the house's: its seed was never revealed\. Nothing came back\./);
-    await last.getByTestId("bj-check-last").click();
-    const checked = last.getByTestId("bj-verify");
+    const details = await openDetails(page);
+    await details.getByTestId("bj-check-last").click();
+    const checked = details.getByTestId("bj-verify");
     await expect(checked).toHaveAttribute("data-ok", "yes");
     await expect(checked.getByTestId("bj-verdict")).toHaveText("Verified. No cards were dealt: the seed was never revealed, so the bet went to the house.");
     await expect(checked.getByTestId("bj-verify-seed")).toHaveText("Not revealed.");
@@ -518,17 +630,19 @@ test.describe("the blackjack table", () => {
     table.house.paused = true;
     await expect(page.getByTestId("bj-bet-blocked")).toHaveText("New bets are paused. Open hands play on.");
     await expect(page.getByTestId("bj-bet-review")).toHaveCount(0);
-    await expect(page.getByTestId("bj-house")).toContainText("paused");
+    await expect((await openDetails(page)).getByTestId("bj-house")).toContainText("paused");
   });
 
   test("signed out, the table can be watched and nothing is kept; without a table the page says so", async ({ page, node }) => {
     addTable(node);
     await page.goto(`/blackjack?table=${TABLE}`);
     await expect(page.getByTestId("bj-note")).toHaveText(NOTE);
-    await expect(page.getByTestId("bj-house")).toContainText("0 of 10");
     await expect(page.getByTestId("bj-sign-in")).toContainText("Sign in or create a wallet to play.");
     await expect(page.getByTestId("bj-bet-form")).toHaveCount(0);
-    await expect(page.getByTestId("bj-rules")).toContainText("Why the cards are fair");
+    await expect(page.getByTestId("bj-play-again")).toHaveCount(0);
+    const details = await openDetails(page);
+    await expect(details.getByTestId("bj-house")).toContainText("0 of 10");
+    await expect(details.getByTestId("bj-rules")).toContainText("Why the cards are fair");
     expect(await page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith("blockula.blackjack")))).toEqual([]);
     await clean(page, errors);
 
@@ -671,6 +785,6 @@ test.describe("the spectator view and the share card", () => {
     await expect(share.getByTestId("bj-share-open")).toHaveAttribute("href", `/blackjack?table=${TABLE}`);
     expect(await cspViolations(page)).toEqual([]);
     await share.getByTestId("bj-share-open").click();
-    await expect(page.getByTestId("bj-table")).toContainText(TABLE);
+    await expect((await openDetails(page)).getByTestId("bj-table")).toContainText(TABLE);
   });
 });
