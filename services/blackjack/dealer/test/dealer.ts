@@ -348,22 +348,29 @@ try {
 
     // Someone reveals every link the dealer was about to: its call changes nothing and isn't an
     // error, and the next read finds the hand moved on.
-    const ra = rig();
-    await ra.step();
-    const all = ra.table.bet("boo1alice", seed());
-    const ca = chainFromTop(ra.store.top(all)!);
-    let copied = false;
-    ra.table.beforeApply = (c) => {
-      if (c.method !== "reveal" || copied) return;
-      copied = true;
-      ra.table.call(c, "boo1stranger");
-    };
-    await ra.step();
-    assert.equal(copied, true);
-    assert.equal(ra.logs.find((l) => l.action === "reveal_refused"), undefined);
-    assert.equal(ra.logs.filter((l) => l.action === "reveal").at(-1)!.cards, undefined, "nothing dealt by the dealer's own call");
-    const ga = ra.table.games.get(all);
-    if (ga) assert.equal(ga.link, ca[3]);
+    // (A natural is settled by the copied deal, and the dealer's call is then refused with 54, the
+    // case further down: one deal in twenty or so, so this takes a deal that leaves the hand open.)
+    let stayedOpen = false;
+    for (let attempt = 0; attempt < 20 && !stayedOpen; attempt++) {
+      const ra = rig();
+      await ra.step();
+      const all = ra.table.bet("boo1alice", seed());
+      const ca = chainFromTop(ra.store.top(all)!);
+      let copied = false;
+      ra.table.beforeApply = (c) => {
+        if (c.method !== "reveal" || copied) return;
+        copied = true;
+        ra.table.call(c, "boo1stranger");
+        stayedOpen = ra.table.games.has(all);
+      };
+      await ra.step();
+      assert.equal(copied, true);
+      if (!stayedOpen) continue;
+      assert.equal(ra.logs.find((l) => l.action === "reveal_refused"), undefined);
+      assert.equal(ra.logs.filter((l) => l.action === "reveal").at(-1)!.cards, undefined, "nothing dealt by the dealer's own call");
+      assert.equal(ra.table.games.get(all)!.link, ca[3]);
+    }
+    assert.ok(stayedOpen, "20 deals, and every one a natural");
     // A link that is neither held nor next is still refused, as it was.
     const rb = rig();
     await rb.step();
