@@ -152,6 +152,28 @@ export function betProblem(raw: string, c: BetContext): string | null {
   return null;
 }
 
+/** What the bet field starts with: the last settled hand's stake, written as the form writes amounts; empty with no last hand. */
+export function betPrefill(last: Pick<LastHand, "stake"> | null | undefined): string {
+  return last && last.stake > 0n ? fang(last.stake) : "";
+}
+
+/** "Play again": the last hand's stake as a new bet. */
+export interface PlayAgain {
+  /** What goes in the bet field, in FANG. */
+  amount: string;
+  /** The stake to bet (drops) when the table takes that amount right now, else null. */
+  stake: bigint | null;
+  /** Why it can't be bet as it is, in the bet form's own words. */
+  problem: string | null;
+}
+
+/** The last hand's stake, held to the same checks as a typed bet: it is only bet when the table would take it now. */
+export function playAgain(last: Pick<LastHand, "stake">, c: BetContext): PlayAgain {
+  const amount = betPrefill(last);
+  const problem = betProblem(amount, c);
+  return { amount, stake: problem ? null : parseAmount(amount), problem };
+}
+
 // ---------------------------------------------------------------------------------- deadlines
 
 export interface Countdown {

@@ -9,6 +9,7 @@ import { ABORTS, DEFAULT_LIMITS, DROPS_PER_FANG, EMPTY_PLAYER, Outcome, Phase, P
 import {
   ADULT_KEY,
   addHandTx,
+  betPrefill,
   betProblem,
   bindBet,
   blocksWords,
@@ -28,6 +29,7 @@ import {
   noteRevealTx,
   parseAmount,
   payoutWords,
+  playAgain,
   readStore,
   rememberSeed,
   seatOf,
@@ -150,6 +152,65 @@ test("the bet form says what the program would refuse, in the program's order", 
   assert.match(tableProblem(ctx({ commitmentReady: false })), /dealer isn't ready/);
   assert.match(betProblem("2", ctx({ house: house({ paused: true }) })), /paused/, "a blocked table blocks every bet");
   assert.equal(tableProblem(ctx()), null);
+});
+
+test("play again reuses the last hand's stake while the table still takes it, and never bets an amount it wouldn't", () => {
+  const last = (stake) => ({ game: 4n, outcome: Outcome.Push, dealt: 4, nPlayer: 2, stake, payout: stake, clientSeed: "ab".repeat(32), seedHash: null, link: "cd".repeat(32) });
+  // The bet field starts from the last stake, written as the form writes amounts; empty before any hand.
+  assert.equal(betPrefill(null), "");
+  assert.equal(betPrefill(last(2n * F)), "2");
+  assert.equal(betPrefill(last(1_500_000_000n)), "1.5");
+  assert.equal(betPrefill(last(1_000_000_001n)), "1.000000001");
+  assert.equal(parseAmount(betPrefill(last(12_345_678_901n))), 12_345_678_901n, "what's prefilled is read back as the same stake");
+  // Still legal: the same stake is the bet, through the form's own check.
+  assert.deepEqual(playAgain(last(2n * F), ctx()), { amount: "2", stake: 2n * F, problem: null });
+  assert.deepEqual(playAgain(last(50n * F), ctx()), { amount: "50", stake: 50n * F, problem: null });
+  // No longer legal: the amount is still shown, with the bet form's words, and there is no stake to bet.
+  const day = 100_000n / DEFAULT_LIMITS.dayBlocks;
+  const short = playAgain(last(30n * F), ctx({ player: { ...EMPTY_PLAYER, day, wagered: 480n * F } }));
+  assert.equal(short.amount, "30");
+  assert.equal(short.stake, null);
+  assert.match(short.problem, /You have 20 FANG left today/);
+  assert.match(playAgain(last(40n * F), ctx({ house: house({ bankroll: 300n * F }) })).problem, /largest bet right now is 15 FANG/);
+  assert.match(playAgain(last(2n * F), ctx({ limits: { ...DEFAULT_LIMITS, minBet: 5n * F } })).problem, /smallest bet is 5 FANG/);
+  assert.match(playAgain(last(30n * F), ctx({ transferable: 25n * F })).problem, /can move 25 FANG/);
+  assert.equal(playAgain(last(2n * F), ctx({ house: house({ paused: true }) })).stake, null, "a blocked table takes no bet");
+  for (const c of [ctx({ house: house({ paused: true }) }), ctx({ commitmentReady: false }), ctx({ transferable: 1n * F })]) {
+    const again = playAgain(last(2n * F), c);
+    assert.equal(again.problem, betProblem("2", c), "the same words as a typed bet");
+    assert.equal(again.stake === null, again.problem !== null);
+  }
+});
+
+test("the table page leads with the cards: play again sits with the hand, and the rules and the check are under closed details", () => {
+  const src = readFileSync(new URL("../app/blackjack/view.tsx", import.meta.url), "utf8");
+  const details = src.indexOf('data-testid="bj-details"');
+  assert.ok(details > 0, "one details block");
+  // Closed until asked for: the page never opens it itself.
+  assert.match(src, /<details className="card bj-more" data-testid="bj-details">/);
+  assert.doesNotMatch(src, /<details[^>]*\bopen\b/);
+  // The hand, its buttons and the 18+ gate come first on the page.
+  const page = src.slice(src.indexOf("function TablePage"), src.indexOf("function revealRequest"));
+  const at = (needle) => {
+    const i = page.indexOf(needle);
+    assert.ok(i > 0, needle);
+    return i;
+  };
+  const more = at('data-testid="bj-details"');
+  for (const first of ["<OpenHand ", "<LastHandView ", "<BetForm ", "{signer.panel}", 'data-testid="bj-gate"']) assert.ok(at(first) < more, `${first} is above the details`);
+  for (const below of ["<OpenHandDetails ", "<LastHandDetails ", 'data-testid="bj-house"', 'data-testid="bj-table"', 'data-testid="bj-rules"', "<BalancePanel "]) assert.ok(at(below) > more, `${below} is in the details`);
+  // Play again is the bet form's own button: the same seed, the same review, the same gate.
+  const form = src.slice(src.indexOf("function BetForm"), src.indexOf("function OpenHand("));
+  assert.match(form, /data-testid="bj-play-again"/);
+  assert.match(form, /\{COPY\.bet\.again\}/);
+  assert.equal(COPY.bet.again, "Play again");
+  assert.match(form, /useState\(\(\) => betPrefill\(last\)\)/, "the field starts from the last stake");
+  assert.equal(form.match(/signer\.start\(/g).length, 1, "one way to a bet");
+  assert.equal(form.match(/rememberSeed\(/g).length, 1);
+  assert.match(form, /if \(betProblem\(amount, ctx\) \|\| stake === null \|\| !adult\) return;/);
+  // The fairness text is still said, in the details.
+  assert.match(COPY.details.lede, /hash chain the dealer locked in before your bet/);
+  assert.ok(rulesText(DEFAULT_LIMITS).some((r) => r.title === "Why the cards are fair"));
 });
 
 // ---------------------------------------------------------------------------------- deadlines and whose move
