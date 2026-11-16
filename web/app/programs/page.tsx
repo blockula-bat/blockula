@@ -9,7 +9,7 @@ import { BLACKJACK_TABLE } from "@/lib/config";
 import { inertText, shortAddress, typeText } from "@/lib/explorer/inert";
 import { compactDrops, parseDrops } from "@/lib/explorer/ledger";
 import { NodeError, useNode } from "@/lib/explorer/node";
-import { createdProgramAddresses, featuredPrograms, listDeployed, type FeaturedProgram } from "@/lib/explorer/featured";
+import { createdProgramAddresses, featuredPrograms, featuredTable, listDeployed, type FeaturedProgram } from "@/lib/explorer/featured";
 import { deployedProgram, PROGRAMS, signature } from "@/lib/explorer/programs";
 import { to } from "@/lib/explorer/routes";
 import type { ChainStatus, ContributionsView, DeployedProgramView, HuntsView, ProgramsList, ValidatorsDetail } from "@/lib/explorer/types";
@@ -20,6 +20,7 @@ export default function ProgramsPage() {
   const hunts = useNode<HuntsView>("/hunts?status=open", { every: 30_000 });
   const pool = useNode<ContributionsView>("/contributions", { every: 30_000 });
   const vals = useNode<ValidatorsDetail>("/validators", { every: 30_000 });
+  const pinnedTable = featuredTable(status.data?.chain_id, status.data?.genesis_hash);
   const escrow = (hunts.data?.hunts ?? []).reduce((s, h) => s + parseDrops(h.amount), 0n);
   const figure: Record<string, ReactNode> = {
     accounts: <>{status.data?.accounts?.toLocaleString("en-US") ?? "…"} accounts</>,
@@ -57,8 +58,8 @@ export default function ProgramsPage() {
             </ul>
           </Link>
         ))}
-        {/* The blackjack table, when this wallet was built with one (lib/config.ts BLACKJACK_TABLE). */}
-        {BLACKJACK_TABLE && (
+        {/* The blackjack table this wallet was built with (lib/config.ts BLACKJACK_TABLE), unless this chain pins a table: then it's under Featured below, once. */}
+        {BLACKJACK_TABLE && status.data && !pinnedTable && (
           <Link href={to.blackjack()} className="card program-card" data-testid="blackjack-card">
             <span className="tag">{COPY.nav.tag}</span>
             <h2>{COPY.nav.title}</h2>
@@ -266,6 +267,42 @@ function DeployedCard({ address, pin, onMissing }: { address: string; pin?: Feat
   }
   const p = deployedProgram(read.data);
   const methods = Array.isArray(read.data.methods) ? read.data.methods : [];
+  // A pin with a page of its own (the blackjack table): the card opens that page, and a second link opens the program's.
+  const play = pin?.play === "blackjack" ? to.blackjack(address) : undefined;
+  const body = (
+    <>
+      <span className="figure">
+        <Fang display={read.data.balance_display} /> held
+      </span>
+      <ul className="iface">
+        {methods.slice(0, 3).map((m, i) => (
+          <li key={i}>
+            <Named text={m.untrusted_name} />({(Array.isArray(m.args) ? m.args : []).map((a) => `${inertText(a.untrusted_name, 24)}: ${typeText(a.type)}`).join(", ")}) <span className="who-can">{inertText(m.kind, 8)}</span>
+          </li>
+        ))}
+        {methods.length > 3 && <li className="who-can">and {methods.length - 3} more</li>}
+      </ul>
+    </>
+  );
+  if (pin && play) {
+    return (
+      <div className="card program-card play" data-testid="featured-card">
+        <span className="tag">{tag}</span>
+        <h2>{pin.title}</h2>
+        <span className="mono dim" title={address}>{shortAddress(address)}</span>
+        <span className="dim">
+          <span className="who-can">The wallet&apos;s description. </span>
+          {pin.blurb}
+        </span>
+        <span className="dim small">{NOTE}</span>
+        {body}
+        <span className="row-gap">
+          <Link href={play} className="btn small primary stretch" data-testid="featured-play">Play</Link>
+          <Link href={to.deployed(address)} className="small also" data-testid="featured-program-page">The program&apos;s page →</Link>
+        </span>
+      </div>
+    );
+  }
   return (
     <Link href={to.deployed(address)} className="card program-card" data-testid={pin ? "featured-card" : "deployed-card"}>
       <span className="tag">{tag}</span>
@@ -281,17 +318,7 @@ function DeployedCard({ address, pin, onMissing }: { address: string; pin?: Feat
       ) : (
         <span className="dim">{p.tagline}</span>
       )}
-      <span className="figure">
-        <Fang display={read.data.balance_display} /> held
-      </span>
-      <ul className="iface">
-        {methods.slice(0, 3).map((m, i) => (
-          <li key={i}>
-            <Named text={m.untrusted_name} />({(Array.isArray(m.args) ? m.args : []).map((a) => `${inertText(a.untrusted_name, 24)}: ${typeText(a.type)}`).join(", ")}) <span className="who-can">{inertText(m.kind, 8)}</span>
-          </li>
-        ))}
-        {methods.length > 3 && <li className="who-can">and {methods.length - 3} more</li>}
-      </ul>
+      {body}
     </Link>
   );
 }

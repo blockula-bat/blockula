@@ -14,7 +14,9 @@ import { ProjectSite } from "@/components/site/ProjectSite";
 import { Tutorial, useTutorial } from "@/components/Tutorial";
 import { SharedBanner } from "@/components/shared";
 import { Copy, ExplorerLink, Spinner } from "@/components/ui";
-import { explorer, SITE } from "@/lib/config";
+import { BLACKJACK_TABLE, explorer, SITE } from "@/lib/config";
+import { featuredTable } from "@/lib/explorer/featured";
+import { to } from "@/lib/explorer/routes";
 import { fangParts, shortAddr } from "@/lib/format";
 import type { TxView } from "@/lib/types";
 import { useUnlocked, useWallet } from "@/lib/wallet";
@@ -69,6 +71,8 @@ function Home() {
   const { whole, frac } = fangParts(account.balance);
   const name = account.names[0];
   const addr = account.account.address;
+  // This chain's pinned blackjack table, else the one this wallet was built with (lib/explorer/featured.ts).
+  const table = featuredTable(status?.chain_id, status?.genesis_hash, BLACKJACK_TABLE);
   return (
     <main className="narrow stack-lg">
       <section className="card plate balance-card">
@@ -90,6 +94,27 @@ function Home() {
         </div>
         <Heartbeat />
       </section>
+
+      <nav className="todo" aria-label="Things to do" data-testid="home-todo">
+        <Link className="todo-tile" href="/name">
+          <b>Names</b>
+          <span>{name ? "Claim another .boo name." : "Claim a .boo name to be paid by."}</span>
+        </Link>
+        <Link className="todo-tile" href="/stake">
+          <b>Stake</b>
+          <span>Back a validator with your <Unit />.</span>
+        </Link>
+        <Link className="todo-tile" href={to.program("hunts")}>
+          <b>Hunts</b>
+          <span>Bounties on GitHub issues.</span>
+        </Link>
+        {table && (
+          <Link className="todo-tile" href={to.blackjack(table)} data-testid="home-blackjack">
+            <b>Blackjack</b>
+            <span>One hand against the dealer.</span>
+          </Link>
+        )}
+      </nav>
 
       <BalanceHistory />
 

@@ -226,6 +226,10 @@ details.raw pre, pre.raw { background: var(--paper-hi); border: 1px solid var(--
 .program-card:hover { color: var(--ink); box-shadow: 5px 5px 0 var(--ink); transform: translate(-2px, -2px); }
 .program-card h2 { margin: 0; font: 400 26px/1.1 var(--display); letter-spacing: 0; }
 .program-card .figure { font: 500 24px var(--serif); }
+/* A pin with a page of its own: the whole card is its "Play" link, and the link to the program's page sits above it. */
+.program-card.play { position: relative; }
+.program-card.play .stretch::after { content: ""; position: absolute; inset: 0; }
+.program-card.play .also { position: relative; z-index: 1; }
 .iface { list-style: none; margin: 0; padding: 0; font: 14px/1.7 var(--mono); color: var(--ink-soft); }
 .iface .fn { color: var(--ink); font-weight: 700; }
 .iface .ty { color: var(--blood); }
