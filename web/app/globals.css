@@ -211,6 +211,14 @@ input:is([type="checkbox"], [type="radio"]):focus-visible { outline: 2px solid v
 .balance .frac { color: var(--dim); }
 .balance .unit { font: 400 24px var(--caps); color: var(--blood); letter-spacing: 0.12em; margin-left: 12px; }
 .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; width: 100%; }
+/* Things to do, under the balance: equal tiles, two across on a phone. */
+.todo { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 12px; }
+.todo-tile { display: flex; flex-direction: column; gap: 4px; padding: 14px 16px; background: rgba(250, 246, 236, 0.5); border: 1.5px solid var(--ink); color: var(--ink); text-decoration: none; transition: box-shadow 0.12s, transform 0.12s; }
+.todo-tile:hover { color: var(--ink); box-shadow: 4px 4px 0 var(--ink); transform: translate(-2px, -2px); }
+.todo-tile b { font: 400 22px/1.1 var(--display); }
+.todo-tile span { color: var(--dim); font-size: 15px; line-height: 1.3; }
+@media (max-width: 520px) { .todo { grid-template-columns: 1fr 1fr; } }
+@media (prefers-reduced-motion: reduce) { .todo-tile { transition: none; } .todo-tile:hover { transform: none; } }
 .claim-pill { font: italic 400 24px var(--display); }
 .big-name { font: italic 400 40px/1.1 var(--display); word-break: break-all; }
 .address { background: var(--paper-hi); border: 1px solid var(--hair); padding: 12px 14px; font-size: 15px; line-height: 1.55; }

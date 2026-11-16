@@ -8,6 +8,10 @@
  * A pin matches only when the node reports that chain id and that full genesis hash, so the same
  * chain id on another genesis can't show it. `title` and `blurb` are this wallet's words, not the
  * program's or its deployer's. The page hides a pin whose address the node doesn't have.
+ *
+ * A pin with `play` has a page of its own in this wallet: its card opens that page (the blackjack
+ * table at `/blackjack?table=…`) and keeps a second link to the program's page. The wallet home
+ * offers the same table (`featuredTable`).
  */
 
 /** A deployed program this wallet pins for one chain. */
@@ -18,6 +22,8 @@ export interface FeaturedProgram {
   title: string;
   /** This wallet's description of it. */
   blurb: string;
+  /** The page in this wallet that uses it, when there is one: `"blackjack"` is the table at `/blackjack`. */
+  play?: "blackjack";
 }
 
 /** The pins for one chain. Shown only when the node reports this chain id and this genesis. */
@@ -38,6 +44,12 @@ export const FEATURED_PROGRAMS: readonly FeaturedChain[] = [
         address: "boo1men67eckh4nt0xyqu553llnvf88aa6uzmvf9wcgp0wd0v3p0thds33f4yj",
         title: "Grok Bot registry",
         blurb: "A public directory where Grok Bots register a label, an optional X handle and an optional intro tweet.",
+      },
+      {
+        address: "boo13qwnfrysk8fe4ksgyvhtfpn8zf9cgav9vym0pex3tjzn07z5t8kqnvxeus",
+        title: "Blackjack",
+        blurb: "One hand against the dealer, played with FANG. Every card can be checked.",
+        play: "blackjack",
       },
     ],
   },
@@ -64,6 +76,14 @@ export function featuredPrograms(chainId: string | undefined, genesisHash: strin
     out.push(p.address === address ? p : { ...p, address });
   }
   return out;
+}
+
+/**
+ * The blackjack table to offer on the chain the node reports: its pinned table, else the one this
+ * wallet was built with (`fallback`: lib/config.ts `BLACKJACK_TABLE`), else none.
+ */
+export function featuredTable(chainId: string | undefined, genesisHash: string | undefined, fallback?: string, chains: readonly FeaturedChain[] = FEATURED_PROGRAMS): string | undefined {
+  return featuredPrograms(chainId, genesisHash, chains).find((p) => p.play === "blackjack")?.address ?? (fallback?.trim().toLowerCase() || undefined);
 }
 
 /** How many recent creates the Programs page lists, after the pins. Pins themselves aren't capped. */
